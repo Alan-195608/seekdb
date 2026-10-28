@@ -1,0 +1,57 @@
+# owner group: storage
+# description: IK character classes, batch boundaries, and index/query consistency
+--disable_query_log
+--disable_result_log
+SET NAMES utf8mb4;
+SET ob_query_timeout = 10000000000;
+DROP TABLE IF EXISTS ik_hotpath_regression;
+CREATE TABLE ik_hotpath_regression (
+  id INT PRIMARY KEY,
+  smart_text TEXT,
+  max_text TEXT
+) CHARSET=utf8mb4;
+INSERT INTO ik_hotpath_regression VALUES
+  (1, 'OceanBase 2026 数据库 ＡＢＣ１２３ あカ한 😀', 'OceanBase 2026 数据库 ＡＢＣ１２３ あカ한 😀'),
+  (2, '数据库 OceanBase OceanBase １２３ 中文', '数据库 OceanBase OceanBase １２３ 中文'),
+  (3, '普通文本 seekdb 42，。！？', '普通文本 seekdb 42，。！？');
+CREATE FULLTEXT INDEX ik_smart ON ik_hotpath_regression(smart_text)
+  WITH PARSER ik PARSER_PROPERTIES=(ik_mode="smart");
+CREATE FULLTEXT INDEX ik_max ON ik_hotpath_regression(max_text)
+  WITH PARSER ik PARSER_PROPERTIES=(ik_mode="max_word");
+
+# Verify complete IDs, rather than only counts. Both query and build tokenize.
+let $ok = query_get_value(SELECT COALESCE(GROUP_CONCAT(id ORDER BY id), '') = '1,2' AS ok FROM ik_hotpath_regression WHERE MATCH(smart_text) AGAINST('oceanbase'), ok, 1);
+if ($ok != 1) {
+  die Incorrect smart-mode IDs after index build;
+}
+let $ok = query_get_value(SELECT COALESCE(GROUP_CONCAT(id ORDER BY id), '') = '1,2' AS ok FROM ik_hotpath_regression WHERE MATCH(max_text) AGAINST('oceanbase'), ok, 1);
+if ($ok != 1) {
+  die Incorrect max-word-mode IDs after index build;
+}
+
+# Check the TOKENIZE path in both modes, including a long input that crosses
+# the parser's batch limit and ends in a different character class.
+let $ok = query_get_value(SELECT JSON_CONTAINS(TOKENIZE(CONCAT(REPEAT('数据库 １２３ あ 😀 ', 1024), 'FinalToken'), 'ik', '[{"additional_args":[{"ik_mode":"smart"}]}]'), '"finaltoken"') AS ok, ok, 1);
+if ($ok != 1) {
+  die Missing final token after smart-mode batch boundary;
+}
+let $ok = query_get_value(SELECT JSON_CONTAINS(TOKENIZE(CONCAT(REPEAT('数据库 １２３ あ 😀 ', 1024), 'FinalToken'), 'ik', '[{"additional_args":[{"ik_mode":"max_word"}]}]'), '"finaltoken"') AS ok, ok, 1);
+if ($ok != 1) {
+  die Missing final token after max-word-mode batch boundary;
+}
+
+INSERT INTO ik_hotpath_regression VALUES (4, 'OceanBase 新文档 123', 'OceanBase 新文档 123');
+UPDATE ik_hotpath_regression SET smart_text='中文 123', max_text='中文 123' WHERE id=1;
+DELETE FROM ik_hotpath_regression WHERE id=2;
+let $ok = query_get_value(SELECT COALESCE(GROUP_CONCAT(id ORDER BY id), '') = '4' AS ok FROM ik_hotpath_regression WHERE MATCH(smart_text) AGAINST('oceanbase'), ok, 1);
+if ($ok != 1) {
+  die Incorrect smart-mode IDs after DML;
+}
+let $ok = query_get_value(SELECT COALESCE(GROUP_CONCAT(id ORDER BY id), '') = '4' AS ok FROM ik_hotpath_regression WHERE MATCH(max_text) AGAINST('oceanbase'), ok, 1);
+if ($ok != 1) {
+  die Incorrect max-word-mode IDs after DML;
+}
+DROP TABLE ik_hotpath_regression;
+--enable_result_log
+--enable_query_log
+--echo IK hotpath regression passed
