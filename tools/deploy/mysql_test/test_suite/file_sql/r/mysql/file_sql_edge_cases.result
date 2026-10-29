@@ -1,0 +1,90 @@
+# enable_file_sql defaults to OFF
+default_enabled
+0
+# A leap day in a leap year is a DATE
+d
+2024-02-29
+# A day that does not exist keeps the ordinary text semantics
+column_name	column_type	null	key	default	extra
+d	VARCHAR	NO	NULL	NULL	NULL
+d
+2026-02-29
+column_name	column_type	null	key	default	extra
+d	VARCHAR	NO	NULL	NULL	NULL
+# A datetime without sub-second parts is rendered without a fraction
+column_name	column_type	null	key	default	extra
+t	DATETIME	NO	NULL	NULL	NULL
+t
+2026-08-01 10:11:12
+# A datetime that carries sub-second parts keeps its precision
+column_name	column_type	null	key	default	extra
+t	DATETIME	NO	NULL	NULL	NULL
+t
+2026-08-01 10:11:12.123456
+# The ISO 8601 separator is accepted
+column_name	column_type	null	key	default	extra
+t	DATETIME	NO	NULL	NULL	NULL
+# A suffix after the fractional part is ordinary text and is kept
+column_name	column_type	null	key	default	extra
+t	VARCHAR	NO	NULL	NULL	NULL
+t
+2026-08-01 10:11:12.1junk
+# A byte order mark at the start of the file is not part of the header
+column_name	column_type	null	key	default	extra
+a	BIGINT	NO	NULL	NULL	NULL
+b	BIGINT	NO	NULL	NULL	NULL
+# A byte order mark inside a data row is ordinary content
+a	b
+﻿1|	2
+# Invalid UTF-8 is rejected
+# CRLF input yields the file columns
+a	b
+1	2
+# A quoted field keeps an embedded line break
+a	b
+x<CR><NL>y	2
+# A quoted field keeps an escaped quote
+a	b
+say "hi"|	2
+# A quoted NULL marker stays a string
+column_name	column_type	null	key	default	extra
+a	VARCHAR	NO	NULL	NULL	NULL
+b	BIGINT	NO	NULL	NULL	NULL
+# Duplicate header names are disambiguated
+column_name	column_type	null	key	default	extra
+a	BIGINT	NO	NULL	NULL	NULL
+a__2	BIGINT	NO	NULL	NULL	NULL
+# Malformed rows are reported instead of returning wrong data
+# A header without data rows yields no rows
+n
+0
+# A column that is NULL in every row keeps the NULL type
+column_name	column_type	null	key	default	extra
+k	NULL	YES	NULL	NULL	NULL
+v	BIGINT	NO	NULL	NULL	NULL
+# BIGINT bounds are exact and a wider integer stays text
+big	small
+9223372036854775807	-9223372036854775808
+column_name	column_type	null	key	default	extra
+big	VARCHAR	NO	NULL	NULL	NULL
+# A custom NULL marker is honoured
+column_name	column_type	null	key	default	extra
+a	VARCHAR	NO	NULL	NULL	NULL
+b	BIGINT	NO	NULL	NULL	NULL
+# A nested JSON object or array is rejected
+# A missing JSON field becomes NULL
+a	b	c
+NULL	NULL	2
+1	x	NULL
+# Conflicting JSON field types widen to text
+column_name	column_type	null	key	default	extra
+a	VARCHAR	NO	NULL	NULL	NULL
+b	VARCHAR	YES	NULL	NULL	NULL
+c	BIGINT	YES	NULL	NULL	NULL
+# COPY writes a file that read_csv can read back
+d
+2026-08-01
+# COPY refuses to overwrite an existing file
+# COPY also accepts a file table as its source
+d
+2026-08-01

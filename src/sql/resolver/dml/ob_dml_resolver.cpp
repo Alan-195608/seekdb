@@ -4027,6 +4027,14 @@ int ObDMLResolver::resolve_file_table_item(const ParseNode &node, TableItem *&it
     }
     ObAccuracy accuracy = ObAccuracy::DDL_DEFAULT_ACCURACY[meta.get_type()];
     if (meta.get_type() == ObVarcharType) accuracy.set_length(16777216);
+    // A DATETIME column carries the fractional-second precision observed in the
+    // data.  A column without sub-second values must render like a plain
+    // `datetime` column instead of padding a zero fraction, and one with
+    // sub-second values must keep them.
+    if (meta.get_type() == ObDateTimeType) {
+      accuracy.set_scale(column.scale);
+      accuracy.set_precision(static_cast<int16_t>(ObAccuracy::DDL_DEFAULT_ACCURACY[ObDateTimeType].get_precision() + column.scale));
+    }
     ObString col_name, temp(column.name.size(), column.name.data());
     ColumnItem *col_item = nullptr;
     if (OB_FAIL(ob_write_string(*allocator_, temp, col_name))) {

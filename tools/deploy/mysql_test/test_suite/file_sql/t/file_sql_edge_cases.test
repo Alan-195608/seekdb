@@ -1,0 +1,128 @@
+# owner: database-competition
+# owner group: SQL
+# description: Edge cases for the file table functions: type inference, dates,
+#              encoding, malformed input and the COPY export.
+# tags: sql,executor,file_sql
+
+--source mysql_test/test_suite/file_sql/include/copy_file_sql_edge_data.inc
+
+--disable_query_log
+let $FILE_SQL_EDGE_DIR = $OBSERVER_DIR/data_for_mysqltest_file_sql_edge;
+
+--echo # enable_file_sql defaults to OFF
+select @@session.enable_file_sql AS default_enabled;
+
+set session enable_file_sql = ON;
+
+--echo # A leap day in a leap year is a DATE
+--disable_result_log
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/date_leap_ok.csv');
+--enable_result_log
+eval select d from read_csv('$FILE_SQL_EDGE_DIR/date_leap_ok.csv');
+
+--echo # A day that does not exist keeps the ordinary text semantics
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/date_leap_bad.csv');
+eval select d from read_csv('$FILE_SQL_EDGE_DIR/date_leap_bad.csv');
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/date_month_bad.csv');
+
+--echo # A datetime without sub-second parts is rendered without a fraction
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/datetime_plain.csv');
+eval select t from read_csv('$FILE_SQL_EDGE_DIR/datetime_plain.csv');
+
+--echo # A datetime that carries sub-second parts keeps its precision
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/datetime_frac.csv');
+eval select t from read_csv('$FILE_SQL_EDGE_DIR/datetime_frac.csv');
+
+--echo # The ISO 8601 separator is accepted
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/datetime_t.csv');
+
+--echo # A suffix after the fractional part is ordinary text and is kept
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/datetime_suffix.csv');
+eval select t from read_csv('$FILE_SQL_EDGE_DIR/datetime_suffix.csv');
+
+--echo # A byte order mark at the start of the file is not part of the header
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/bom_start.csv');
+
+--echo # A byte order mark inside a data row is ordinary content
+eval select concat(a,'|') AS a, b from read_csv('$FILE_SQL_EDGE_DIR/bom_in_data.csv');
+
+--echo # Invalid UTF-8 is rejected
+--disable_result_log
+--error 1210
+eval select * from read_csv('$FILE_SQL_EDGE_DIR/bad_utf8.csv');
+--enable_result_log
+
+--echo # CRLF input yields the file columns
+eval select a, b from read_csv('$FILE_SQL_EDGE_DIR/crlf.csv');
+
+--echo # A quoted field keeps an embedded line break
+eval select replace(replace(a, char(13), '<CR>'), char(10), '<NL>') AS a, b
+       from read_csv('$FILE_SQL_EDGE_DIR/embeddednl.csv');
+
+--echo # A quoted field keeps an escaped quote
+eval select concat(a,'|') AS a, b from read_csv('$FILE_SQL_EDGE_DIR/escapedquote.csv');
+
+--echo # A quoted NULL marker stays a string
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/quotednull.csv');
+
+--echo # Duplicate header names are disambiguated
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/dupheader.csv');
+
+--echo # Malformed rows are reported instead of returning wrong data
+--disable_result_log
+--error 1210
+eval select * from read_csv('$FILE_SQL_EDGE_DIR/badlen.csv');
+--error 1210
+eval select * from read_csv('$FILE_SQL_EDGE_DIR/badquote.csv');
+--error 1210
+eval select * from read_csv('$FILE_SQL_EDGE_DIR/empty.csv');
+--enable_result_log
+
+--echo # A header without data rows yields no rows
+eval select count(*) AS n from read_csv('$FILE_SQL_EDGE_DIR/headeronly.csv');
+
+--echo # A column that is NULL in every row keeps the NULL type
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/allnullcol.csv');
+
+--echo # BIGINT bounds are exact and a wider integer stays text
+eval select big, small from read_csv('$FILE_SQL_EDGE_DIR/bounds.csv');
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/overflow.csv');
+
+--echo # A custom NULL marker is honoured
+eval describe select * from read_csv('$FILE_SQL_EDGE_DIR/nullstr.csv', nullstr = '\\N');
+
+--echo # A nested JSON object or array is rejected
+--disable_result_log
+--error 1210
+eval select * from read_json('$FILE_SQL_EDGE_DIR/nested.jsonl');
+--error 1210
+eval select * from read_json('$FILE_SQL_EDGE_DIR/array.jsonl');
+--enable_result_log
+
+--echo # A missing JSON field becomes NULL
+eval select a, b, c from read_json('$FILE_SQL_EDGE_DIR/missing.jsonl') order by a;
+
+--echo # Conflicting JSON field types widen to text
+eval describe select * from read_json('$FILE_SQL_EDGE_DIR/conflict.jsonl');
+
+--echo # COPY writes a file that read_csv can read back
+eval copy (select d from read_csv('$FILE_SQL_EDGE_DIR/date_ok.csv'))
+       to '$FILE_SQL_EDGE_DIR/export_ok.csv' (format csv, header);
+eval select d from read_csv('$FILE_SQL_EDGE_DIR/export_ok.csv');
+
+--echo # COPY refuses to overwrite an existing file
+--disable_result_log
+--error 1210
+eval copy (select d from read_csv('$FILE_SQL_EDGE_DIR/date_ok.csv'))
+       to '$FILE_SQL_EDGE_DIR/export_ok.csv' (format csv, header);
+--enable_result_log
+
+--echo # COPY also accepts a file table as its source
+eval copy read_csv('$FILE_SQL_EDGE_DIR/date_ok.csv')
+       to '$FILE_SQL_EDGE_DIR/export_table.csv' (format csv, header);
+eval select d from read_csv('$FILE_SQL_EDGE_DIR/export_table.csv');
+
+set session enable_file_sql = OFF;
+--enable_query_log
+
+--source mysql_test/test_suite/file_sql/include/remove_file_sql_edge_data.inc

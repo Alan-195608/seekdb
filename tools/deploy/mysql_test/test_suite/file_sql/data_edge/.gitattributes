@@ -1,0 +1,4 @@
+# Preserve byte-exact encoding, BOM, embedded CRLF and malformed UTF-8 fixtures.
+* -text
+crlf.csv whitespace=cr-at-eol
+embeddednl.csv whitespace=cr-at-eol

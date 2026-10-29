@@ -39,7 +39,10 @@ namespace oceanbase { namespace sql { namespace file_sql {
 
 enum class Type { Null, Int, Double, Bool, String, Date, DateTime };
 struct Cell { std::string text; bool null = false; bool quoted = false; };
-struct Column { std::string name; Type type = Type::Null; bool nullable = false; };
+// `scale` carries the fractional-second precision of a DATETIME column.  It is
+// derived from the data so that a column without sub-second values renders like
+// a plain `datetime` column instead of padding a zero fraction.
+struct Column { std::string name; Type type = Type::Null; bool nullable = false; int scale = 0; };
 struct Options {
   std::string path, root, format = "csv", nullstr = "NULL", schema;
   char delimiter = ',', quote = '"', escape = '"';
@@ -58,29 +61,64 @@ inline bool valid_utf8(const std::string &text) {
   } return true;
 }
 
-inline bool valid_date(const std::string &s, bool datetime = false)
+// Recognises `YYYY-MM-DD` and `YYYY-MM-DD HH:MM:SS[.fraction]`.  The optional
+// separator may also be `T`.  `scale` receives the number of fractional digits
+// so the column can carry the precision of the values it holds.
+inline bool valid_date(const std::string &s, bool datetime = false, int *scale = nullptr)
 {
-  if (s.size() != (datetime ? 19 : 10)) return false;
-  for (size_t i = 0; i < s.size(); ++i) {
-    if (i == 4 || i == 7) { if (s[i] != '-') return false; }
-    else if (i == 10) { if (s[i] != ' ' && s[i] != 'T') return false; }
-    else if (i == 13 || i == 16) { if (s[i] != ':') return false; }
-    else if (s[i] < '0' || s[i] > '9') return false;
+  if (scale) *scale = 0;
+  if (!datetime) {
+    if (s.size() != 10) return false;
+    for (size_t i = 0; i < s.size(); ++i) {
+      if (i == 4 || i == 7) { if (s[i] != '-') return false; }
+      else if (s[i] < '0' || s[i] > '9') return false;
+    }
+  } else {
+    if (s.size() < 19) return false;
+    for (size_t i = 0; i < 19; ++i) {
+      if (i == 4 || i == 7) { if (s[i] != '-') return false; }
+      else if (i == 10) { if (s[i] != ' ' && s[i] != 'T') return false; }
+      else if (i == 13 || i == 16) { if (s[i] != ':') return false; }
+      else if (s[i] < '0' || s[i] > '9') return false;
+    }
+    size_t pos = 19;
+    if (pos < s.size()) {
+      // A fractional part is only valid when it starts with a dot and carries
+      // at least one digit; a bare trailing dot is not a datetime.
+      if (s[pos] != '.') return false;
+      ++pos;
+      size_t digits = 0;
+      while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9') { ++pos; ++digits; }
+      if (digits == 0 || digits > 6) return false;
+      // The fractional part must be the whole remainder.  A trailing suffix
+      // such as ".1junk" is ordinary text, not a datetime.
+      if (pos != s.size()) return false;
+      if (scale) *scale = static_cast<int>(digits);
+    }
   }
   auto n = [&](size_t i, size_t count) { return std::atoi(s.substr(i, count).c_str()); };
   int y = n(0,4), m = n(5,2), d = n(8,2);
   const int days[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
   if (y < 1 || m < 1 || m > 12) return false;
-  int max_day = days[m] + (m == 2 && y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
-  return d >= 1 && d <= max_day && (!datetime || (n(11,2) < 24 && n(14,2) < 60 && n(17,2) < 60));
+  // A leap year is divisible by four, except centuries that are not divisible
+  // by four hundred.  2026 is not a leap year, so 2026-02-29 is invalid.
+  int max_day = days[m] + (m == 2 && y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) ? 1 : 0);
+  if (d < 1 || d > max_day) return false;
+  if (datetime && (n(11,2) > 23 || n(14,2) > 59 || n(17,2) > 59)) return false;
+  return true;
 }
-inline Type infer(const Cell &v)
+inline Type infer(const Cell &v, int *scale = nullptr)
 {
+  if (scale) *scale = 0;
   if (v.null) return Type::Null;
   if (v.text == "true" || v.text == "false" || v.text == "TRUE" || v.text == "FALSE") return Type::Bool;
   if (v.text.empty()) return Type::String;
   if (valid_date(v.text)) return Type::Date;
-  if (valid_date(v.text, true)) return Type::DateTime;
+  int datetime_scale = 0;
+  if (valid_date(v.text, true, &datetime_scale)) {
+    if (scale) *scale = datetime_scale;
+    return Type::DateTime;
+  }
   const char *p = v.text.c_str();
   char *end = nullptr;
   if (*p == '+' || *p == '-') ++p;
@@ -149,15 +187,15 @@ inline bool unpack_string(const std::string &in, size_t &pos, std::string &value
 }
 inline std::string schema_descriptor(const std::vector<Column> &columns) {
   std::string out;
-  for(const auto &column:columns){pack_string(out,column.name);out+=char('0'+int(column.type));out+=column.nullable?'1':'0';}
+  for(const auto &column:columns){pack_string(out,column.name);out+=char('0'+int(column.type));out+=column.nullable?'1':'0';out+=char('0'+column.scale);}
   return out;
 }
 inline bool schema_names(const std::string &schema,std::vector<std::string> &names) {
   size_t pos=0;
   while(pos<schema.size()){
-    std::string name;if(!unpack_string(schema,pos,name)||pos+2>schema.size())return false;
-    if(schema[pos]<'0'||schema[pos]>'6'||(schema[pos+1]!='0'&&schema[pos+1]!='1'))return false;
-    pos+=2;names.push_back(name);
+    std::string name;if(!unpack_string(schema,pos,name)||pos+3>schema.size())return false;
+    if(schema[pos]<'0'||schema[pos]>'6'||(schema[pos+1]!='0'&&schema[pos+1]!='1')||schema[pos+2]<'0'||schema[pos+2]>'6')return false;
+    pos+=3;names.push_back(name);
   }
   return !names.empty();
 }
@@ -337,11 +375,19 @@ public:
       if(schema[i].field(5).integer||schema[i].field(3).integer==2||!schema[i].fields.count(1))return fail("nested or repeated Parquet column is unsupported");
       int physical=schema[i].field(1).integer,converted=schema[i].fields.count(6)?schema[i].field(6).integer:-1;
       Type type=physical==0?Type::Bool:(physical==1||physical==2)?Type::Int:(physical==4||physical==5)?Type::Double:Type::String;
+      int scale=0;
       if(converted==6)type=Type::Date;
-      if(converted==9||converted==10||physical==3)type=Type::DateTime;
+      if(converted==9||converted==10||physical==3){
+        type=Type::DateTime;
+        // Keep the sub-second precision the column actually carries, otherwise
+        // the stored value would be rounded away when it is rendered.
+        if(converted==9)scale=3;
+        else if(converted==10)scale=6;
+        else scale=6;
+      }
       if(physical<0||physical>7||schema[i].field(4).bytes.empty())return fail("invalid Parquet column schema");
       for(const auto &c:columns)if(lower(c.name)==lower(schema[i].field(4).bytes))return fail("duplicate Parquet column name");
-      columns.push_back({schema[i].field(4).bytes,type,schema[i].field(3).integer==1});
+      columns.push_back({schema[i].field(4).bytes,type,schema[i].field(3).integer==1,scale});
     }
     if(metadata_.field(4).list.size()>100000)return fail("too many Parquet row groups");
     return reset();
@@ -532,20 +578,24 @@ public:
         while(exists(name))name=base+"__"+std::to_string(suffix++);
         columns.push_back({name,Type::Null});
       }
-      if(!options_.header)for(size_t i=0;i<row.size();++i){columns[i].type=infer(row[i]);columns[i].nullable=row[i].null;}
+      if(!options_.header)for(size_t i=0;i<row.size();++i){int scale=0;columns[i].type=infer(row[i],&scale);columns[i].scale=scale;columns[i].nullable=row[i].null;}
       while(csv(row)){
         if(row.size()!=columns.size())return fail("CSV field count differs from header");
-        for(size_t i=0;i<row.size();++i){columns[i].type=widen(columns[i].type,infer(row[i]));columns[i].nullable|=row[i].null;}
+        for(size_t i=0;i<row.size();++i){int scale=0;Type type=infer(row[i],&scale);
+          columns[i].type=widen(columns[i].type,type);columns[i].nullable|=row[i].null;
+          if(type==Type::DateTime)columns[i].scale=std::max(columns[i].scale,scale);
+        }
       }
     } else if(options_.format=="jsonl") {
       std::map<std::string,Cell> object;size_t records=0;
       while(json(object)){
         for(auto &column:columns)if(!object.count(column.name))column.nullable=true;
         for(const auto &entry:object){auto it=std::find_if(columns.begin(),columns.end(),[&](const Column &c){return c.name==entry.first;});
-          Type type=infer(entry.second);
+          int scale=0;Type type=infer(entry.second,&scale);
           if(entry.second.quoted&&type!=Type::Date&&type!=Type::DateTime)type=Type::String;
-          if(it==columns.end()){if(columns.size()>=1024)return fail("too many JSONL fields");columns.push_back({entry.first,type,records>0||entry.second.null});}
-          else {it->type=widen(it->type,type);it->nullable|=entry.second.null;}
+          if(it==columns.end()){if(columns.size()>=1024)return fail("too many JSONL fields");columns.push_back({entry.first,type,records>0||entry.second.null,scale});}
+          else {it->type=widen(it->type,type);it->nullable|=entry.second.null;
+            if(type==Type::DateTime)it->scale=std::max(it->scale,scale);}
         }
         ++records;
       }

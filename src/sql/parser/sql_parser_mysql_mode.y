@@ -16659,6 +16659,20 @@ copy_source:
   $$->children_[PARSE_SELECT_SELECT] = projects;
   $$->children_[PARSE_SELECT_FROM] = tables;
 }
+| file_table_expr
+{
+  // `COPY read_csv(...) TO path` exports the file table like a query would.
+  ParseNode *star = NULL, *projection = NULL, *projects = NULL, *table = NULL, *tables = NULL;
+  malloc_terminal_node(star, result->malloc_pool_, T_STAR);
+  malloc_non_terminal_node(projection, result->malloc_pool_, T_PROJECT_STRING, 1, star);
+  dup_string_to_node(projection, result->malloc_pool_, "*");
+  merge_nodes(projects, result, T_PROJECT_LIST, projection);
+  malloc_non_terminal_node(table, result->malloc_pool_, T_ORG, 4, $1, NULL, NULL, NULL);
+  merge_nodes(tables, result, T_FROM_LIST, table);
+  malloc_select_node($$, result->malloc_pool_);
+  $$->children_[PARSE_SELECT_SELECT] = projects;
+  $$->children_[PARSE_SELECT_FROM] = tables;
+}
 ;
 copy_options:
 /* empty */ { $$ = NULL; }
