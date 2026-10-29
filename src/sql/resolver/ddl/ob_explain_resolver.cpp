@@ -17,6 +17,9 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/ddl/ob_explain_resolver.h"
 #include "sql/resolver/ob_resolver.h"
+#include "sql/parser/ob_parser.h"
+#include "sql/resolver/dml/ob_select_stmt.h"
+#include <string>
 
 using namespace oceanbase;
 using namespace sql;
@@ -64,9 +67,58 @@ int ObExplainResolver::resolve(const ParseNode &parse_tree)
         LOG_WARN("failed to generate stmt for child stmt");
       } else {
         explain_stmt->set_explain_query_stmt(static_cast<ObDMLStmt *>(child_stmt));
+        if (parse_tree.children_[EXPLAIN_FORMAT] != nullptr
+            && parse_tree.children_[EXPLAIN_FORMAT]->type_ == T_SORT_DESC && child_stmt->is_select_stmt()) {
+          ObSelectStmt *select = static_cast<ObSelectStmt *>(child_stmt);
+          bool file_query = false;
+          for (int64_t i=0; i<select->get_table_size(); ++i) {
+            const TableItem *table = select->get_table_item(i);
+            file_query |= table->is_function_table() && table->function_table_expr_->is_const_expr();
+          }
+          if (file_query) {
+            auto literal = [](const ObString &text) {
+              const char *digits = "0123456789abcdef";
+              std::string result = "CONVERT(0x";
+              for (int64_t i=0; i<text.length(); ++i) {
+                unsigned char c = text.ptr()[i]; result += digits[c >> 4]; result += digits[c & 15];
+              }
+              result += " USING utf8mb4)"; return result;
+            };
+            std::string sql;
+            for (int64_t i=0; i<select->get_select_item_size(); ++i) {
+              const SelectItem &item = select->get_select_item(i);
+              ObString name = item.alias_name_.empty() ? item.expr_name_ : item.alias_name_;
+              const char *type = "VARCHAR";
+              switch (item.expr_->get_data_type()) {
+                case ObNullType: type = "NULL"; break;
+                case ObIntType: type = "BIGINT"; break;
+                case ObDoubleType: type = "DOUBLE"; break;
+                case ObTinyIntType: type = "BOOLEAN"; break;
+                case ObDateType: type = "DATE"; break;
+                case ObDateTimeType: type = "DATETIME"; break;
+                default: break;
+              }
+              if (i != 0) sql += " UNION ALL ";
+              sql += "SELECT " + literal(name) + " AS column_name, '" + type + "' AS column_type, '";
+              sql += item.expr_->is_not_null_for_read() ? "NO" : "YES";
+              sql += "' AS `null`, NULL AS `key`, NULL AS `default`, NULL AS extra";
+            }
+            ObParser parser(*allocator_, params_.session_info_->get_sql_mode());
+            ParseResult parsed;
+            ObString statement(sql.size(), sql.data());
+            ObStmt *metadata = nullptr;
+            ObResolver metadata_resolver(params_);
+            if (OB_FAIL(parser.parse(statement, parsed))) {
+            } else if (OB_ISNULL(parsed.result_tree_) || parsed.result_tree_->num_child_ != 1) { ret = OB_ERR_UNEXPECTED;
+            } else if (OB_FAIL(metadata_resolver.resolve(ObResolver::IS_NOT_PREPARED_STMT, *parsed.result_tree_->children_[0], metadata))) {
+            } else { set_basic_stmt(metadata); }
+            return ret;
+          }
+        }
         ParseNode *format = parse_tree.children_[EXPLAIN_FORMAT];
         if (NULL != format) {
           switch (format->type_) {
+          case T_SORT_DESC: break;
           case T_OUTLINE:
           {
             explain_stmt->set_explain_format(EXPLAIN_OUTLINE);

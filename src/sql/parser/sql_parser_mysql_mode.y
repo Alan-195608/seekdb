@@ -50,6 +50,10 @@
   if (0 != display_type) { \
     malloc_terminal_node(display_node, result->malloc_pool_, display_type); \
   } \
+  if (0 == explain_type && (no_use) != NULL && (no_use)->value_ == 1) { \
+    malloc_terminal_node(type_node, result->malloc_pool_, T_SORT_DESC); \
+    type_node->is_hidden_const_ = 1; \
+  } \
   malloc_non_terminal_node(explain_stmt, result->malloc_pool_, T_EXPLAIN, 5, \
                            type_node, display_node, into_table, set_statement_id, stmt);
 %}
@@ -497,7 +501,7 @@ END_P SET_VAR DELIMITER
 %type <node> dynamic_sampling_hint
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters
-%type <node> json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def
+%type <node> copy_stmt copy_source copy_options copy_option_list copy_option file_table_expr file_table_alias json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
 %type <node> table_values_clause table_values_clause_with_order_by_and_limit values_row_list row_value
@@ -555,7 +559,8 @@ opt_end_p:
 
 /* only preparable statement will set question mark size */
 stmt:
-    select_stmt             { $$ = $1; question_mark_issue($$, result); }
+    copy_stmt { $$ = $1; question_mark_issue($$, result); }
+  | select_stmt             { $$ = $1; question_mark_issue($$, result); }
   | insert_stmt             { $$ = $1; question_mark_issue($$, result); }
   | create_table_stmt       {
     $$ = $1;
@@ -10835,6 +10840,10 @@ tbl_name
 {
   $$ = $1;
 }
+| file_table_expr
+{
+  $$ = $1;
+}
 | '(' table_references ')'
 {
   $$ = $2;
@@ -12306,8 +12315,8 @@ explain_or_desc relation_factor opt_desc_column_option
 
 explain_or_desc:
 EXPLAIN {$$ = NULL;}
-| DESCRIBE {$$ = NULL;}
-| DESC  {$$ = NULL;}
+| DESCRIBE { malloc_terminal_node($$, result->malloc_pool_, T_BOOL); $$->value_ = 1; }
+| DESC { malloc_terminal_node($$, result->malloc_pool_, T_BOOL); $$->value_ = 1; }
 ;
 
 explainable_stmt:
@@ -16623,6 +16632,66 @@ DAY
 *
 *  JSON TABLE
 *============================================================*/
+
+copy_stmt:
+COPY copy_source TO STRING_VALUE copy_options
+{
+  ParseNode *into = NULL;
+  malloc_non_terminal_node(into, result->malloc_pool_, T_INTO_OUTFILE, 3, $4, $5, NULL);
+  into->value_ = 1;
+  into->is_tree_not_param_ = 1;
+  $$ = $2;
+  $$->children_[PARSE_SELECT_INTO] = into;
+}
+;
+copy_source:
+'(' select_stmt ')' { $$ = $2; }
+| relation_factor
+{
+  ParseNode *star = NULL, *projection = NULL, *projects = NULL, *table = NULL, *tables = NULL;
+  malloc_terminal_node(star, result->malloc_pool_, T_STAR);
+  malloc_non_terminal_node(projection, result->malloc_pool_, T_PROJECT_STRING, 1, star);
+  dup_string_to_node(projection, result->malloc_pool_, "*");
+  merge_nodes(projects, result, T_PROJECT_LIST, projection);
+  malloc_non_terminal_node(table, result->malloc_pool_, T_ORG, 4, $1, NULL, NULL, NULL);
+  merge_nodes(tables, result, T_FROM_LIST, table);
+  malloc_select_node($$, result->malloc_pool_);
+  $$->children_[PARSE_SELECT_SELECT] = projects;
+  $$->children_[PARSE_SELECT_FROM] = tables;
+}
+;
+copy_options:
+/* empty */ { $$ = NULL; }
+| '(' copy_option_list ')' { merge_nodes($$, result, T_EXPR_LIST, $2); }
+;
+copy_option_list:
+copy_option { $$ = $1; }
+| copy_option_list ',' copy_option { malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3); }
+;
+copy_option:
+relation_name literal { malloc_non_terminal_node($$, result->malloc_pool_, T_OP_EQ, 2, $1, $2); }
+| relation_name relation_name { malloc_non_terminal_node($$, result->malloc_pool_, T_OP_EQ, 2, $1, $2); }
+| relation_name
+{
+  ParseNode *value = NULL;
+  malloc_terminal_node(value, result->malloc_pool_, T_BOOL);
+  value->value_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_EQ, 2, $1, value);
+}
+;
+
+file_table_alias:
+/* empty */ %prec LOWER_PARENS { $$ = NULL; }
+| relation_name { $$ = $1; }
+| AS relation_name { $$ = $2; }
+;
+file_table_expr:
+NAME_OB '(' expr_list ')' file_table_alias
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $5);
+  $$->is_tree_not_param_ = 1;
+}
+;
 
 json_table_expr:
 JSON_TABLE '(' simple_expr ',' literal mock_jt_on_error_on_empty COLUMNS '(' jt_column_list ')' ')' relation_name

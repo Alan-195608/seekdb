@@ -17,6 +17,7 @@
 #ifndef SRC_SQL_ENGINE_BASIC_OB_SELECT_INTO_OP_H_
 #define SRC_SQL_ENGINE_BASIC_OB_SELECT_INTO_OP_H_
 
+#include "sql/engine/basic/file_scan_utils.h"
 #include "sql/engine/ob_operator.h"
 #include "lib/file/ob_file.h"
 #include "sql/engine/cmd/ob_load_data_parser.h"
@@ -71,7 +72,7 @@ public:
       parallel_(1),
       buffer_size_(DEFAULT_BUFFER_SIZE),
       is_overwrite_(false),
-      external_properties_(alloc)
+      external_properties_(alloc), copy_columns_(alloc)
   {
   }
 
@@ -91,6 +92,7 @@ public:
   int64_t buffer_size_;
   bool is_overwrite_;
   ObExternalFileFormat::StringData external_properties_;
+  common::ObFixedArray<common::ObString, common::ObIAllocator> copy_columns_;
   static const int64_t DEFAULT_MAX_FILE_SIZE = 256LL * 1024 * 1024;
   static const int64_t DEFAULT_BUFFER_SIZE = 1LL * 1024 * 1024;
 };
@@ -126,7 +128,7 @@ public:
       external_properties_(),
       format_type_(ObExternalFileFormat::FormatType::CSV_FORMAT),
       block_id_(0),
-      need_commit_(true)
+      need_commit_(true), copy_writer_(nullptr), copy_finished_(false)
   {
   }
 
@@ -195,6 +197,9 @@ public:
   virtual void destroy() override;
 
 private:
+  int init_copy(const file_sql::Options &options);
+  int execute_copy(bool batch);
+  int write_copy_row();
   int init_env_common();
   int init_csv_env();
   void set_csv_format_options();
@@ -292,6 +297,8 @@ private:
   ObExternalFileFormat::FormatType format_type_;
   uint32_t block_id_;
   bool need_commit_;
+  file_sql::CopyWriter *copy_writer_;
+  bool copy_finished_;
   static const int64_t SHARED_BUFFER_SIZE = 2LL * 1024 * 1024;
 
 };

@@ -15,6 +15,8 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/basic/file_scan_utils.h"
+#include "share/schema/ob_schema_utils.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/resolver/dml/ob_del_upd_resolver.h"
 #include "share/ob_time_utility2.h"
@@ -3105,7 +3107,43 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
       new(into_item) ObSelectIntoItem();
       into_item->into_type_ = node->type_;
       if (T_INTO_OUTFILE == node->type_) { // into outfile
-        if (is_in_set_query()) {
+        if (node->value_ == 1) {
+          file_sql::Options options;
+          options.format = "copy"; options.header = false;
+          bool enabled = false;
+          ObString root;
+          if (OB_FAIL(session_info_->get_sys_variable(SYS_VAR_ENABLE_FILE_SQL, enabled))) {
+          } else if (!enabled) { ret = OB_NOT_SUPPORTED;
+          } else if (OB_FAIL(ObSchemaUtils::get_runtime_varchar_variable(
+              *GCTX.schema_service_, SYS_VAR_SECURE_FILE_PRIV, *allocator_, root))) {
+          } else {
+            options.root.assign(root.ptr(), root.length());
+            options.path.assign(node->children_[0]->str_value_, node->children_[0]->str_len_);
+          }
+          const ParseNode *opts = node->children_[1];
+          std::map<std::string, bool> seen;
+          for (int64_t i=0; OB_SUCC(ret) && opts != nullptr && i<opts->num_child_; ++i) {
+            const ParseNode *key = opts->children_[i]->children_[0];
+            const ParseNode *value = opts->children_[i]->children_[1];
+            std::string name = file_sql::lower(std::string(key->str_value_, key->str_len_));
+            if (seen[name]) { ret = OB_INVALID_ARGUMENT; break; } seen[name] = true;
+            std::string text = value->str_value_ ? std::string(value->str_value_, value->str_len_) : std::string();
+            if (name == "header" && (value->type_ == T_BOOL || value->type_ == T_INT)) { options.header = value->value_ != 0;
+            } else if (name == "format" && file_sql::lower(text) == "csv") {
+            } else if (name == "nullstr" && value->type_ == T_VARCHAR) { options.nullstr = text;
+            } else if ((name == "delimiter" || name == "delim" || name == "quote" || name == "escape") && text.size() == 1) {
+              if (name == "quote") options.quote = text[0];
+              else if (name == "escape") options.escape = text[0];
+              else options.delimiter = text[0];
+            } else { ret = OB_INVALID_ARGUMENT; }
+          }
+          if (OB_SUCC(ret)) {
+            std::string encoded = file_sql::encode(options);
+            ObString temporary(encoded.size(), encoded.data()), stored;
+            if (OB_FAIL(ob_write_string(*allocator_, temporary, stored))) {
+            } else { into_item->outfile_name_.set_varchar(stored); }
+          }
+        } else if (is_in_set_query()) {
           ret = OB_INAPPROPRIATE_INTO;
         } else if (node->num_child_ == 3 && NULL != node->children_[1]
             && T_EXTERNAL_FILE_FORMAT == node->children_[1]->type_) { // Handle with `FORMAT`

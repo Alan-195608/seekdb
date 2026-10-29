@@ -5477,6 +5477,16 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
       } else if (OB_FAIL(spec.select_exprs_.push_back(rt_expr))) {
       }
     }
+    if (OB_SUCC(ret) && op.get_stmt()->is_select_stmt()) {
+      const ObSelectStmt *select = static_cast<const ObSelectStmt *>(op.get_stmt());
+      OZ (spec.copy_columns_.init(select->get_select_item_size()));
+      for (int64_t i=0; OB_SUCC(ret) && i<select->get_select_item_size(); ++i) {
+        const SelectItem &item = select->get_select_item(i);
+        ObString name, origin = item.alias_name_.empty() ? item.expr_name_ : item.alias_name_;
+        OZ (ob_write_string(alloc, origin, name));
+        OZ (spec.copy_columns_.push_back(name));
+      }
+    }
     if (OB_SUCC(ret)) {
       spec.into_type_ = op.get_into_type();
       spec.is_optional_ = op.get_is_optional();
@@ -5503,6 +5513,7 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
   if (OB_ISNULL(op.get_stmt())) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(spec.column_exprs_.init(op.get_stmt()->get_column_size()))) {
+  } else if (OB_FAIL(spec.file_column_ids_.init(op.get_stmt()->get_column_size()))) {
   } else if (OB_UNLIKELY(op.get_num_of_child() > 1)) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_ISNULL(value_raw_expr = op.get_value_expr())) {
@@ -5526,6 +5537,7 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
         OZ (mark_expr_self_produced(col_item->expr_));
         OZ (generate_rt_expr(*col_item->expr_, rt_expr));
         OZ (spec.column_exprs_.push_back(rt_expr));
+        OZ (spec.file_column_ids_.push_back(col_item->column_id_ - OB_APP_MIN_COLUMN_ID));
       }
     }
   }
