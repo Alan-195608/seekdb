@@ -1,0 +1,27 @@
+-- Requires ai_function_mock.py on port 19125 and a fresh seekdb_task_checks database.
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL('task1_complete','{"type":"completion","model_name":"generic-completion"}');
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT('task1_complete_ep','{"ai_model_name":"task1_complete","scope":"all","url":"http://127.0.0.1:19125/v1/chat/completions","access_key":"mock","provider":"openai"}');
+SELECT AI_COMPLETE('task1_complete','hello',NULL);
+SELECT AI_COMPLETE('task1_complete',AI_PROMPT('{0}/{0}',JSON_OBJECT('text','你好')),JSON_OBJECT('temperature',0.2,'max_tokens',16));
+SELECT AI_COMPLETE('task1_complete',AI_PROMPT('outer {0}',AI_PROMPT('inner {0}','value')));
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL('task1_embed','{"type":"dense_embedding","model_name":"generic-embedding"}');
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT('task1_embed_ep','{"ai_model_name":"task1_embed","scope":"all","url":"http://127.0.0.1:19125/v1/embeddings","access_key":"mock","provider":"openai"}');
+SELECT JSON_LENGTH(AI_EMBED('task1_embed','single')) AS dimension;
+SELECT JSON_LENGTH(AI_EMBED('task1_embed','explicit',7)) AS dimension;
+SELECT AI_EMBED('task1_embed',NULL) IS NULL AS null_propagated;
+USE seekdb_task_checks;
+CREATE TABLE IF NOT EXISTS embedding_rows(id INT PRIMARY KEY, content TEXT);
+REPLACE INTO embedding_rows VALUES(1,'first'),(2,NULL),(3,'third'),(4,'fourth');
+SELECT id,AI_EMBED('task1_embed',content) AS vector FROM embedding_rows ORDER BY id;
+SELECT id,JSON_LENGTH(AI_EMBED('task1_embed',content,3)) FROM embedding_rows WHERE id>1 ORDER BY id LIMIT 2;
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL('task1_ollama_complete','{"type":"completion","model_name":"generic-ollama"}');
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT('task1_ollama_complete_ep','{"ai_model_name":"task1_ollama_complete","scope":"all","url":"http://127.0.0.1:19125/api/generate","access_key":"","provider":"ollama"}');
+CALL DBMS_AI_SERVICE.ALTER_AI_MODEL_ENDPOINT('task1_ollama_complete_ep','{"provider":"Ollama"}');
+SELECT AI_COMPLETE('task1_ollama_complete','hello');
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL('task1_ollama_embed','{"type":"dense_embedding","model_name":"generic-ollama-embed"}');
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT('task1_ollama_embed_ep','{"ai_model_name":"task1_ollama_embed","scope":"all","url":"http://127.0.0.1:19125/api/embed","access_key":"","provider":"OLLAMA"}');
+SELECT JSON_LENGTH(AI_EMBED('task1_ollama_embed','hello'));
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL('task1_rerank','{"type":"rerank","model_name":"generic-rerank"}');
+CALL DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT('task1_rerank_ep','{"ai_model_name":"task1_rerank","scope":"all","url":"http://127.0.0.1:19125/v1/rerank","access_key":"mock","provider":"siliconflow"}');
+SELECT AI_RERANK('task1_rerank','apple','["apple","banana","apple pie"]',NULL);
+SELECT AI_RERANK('task1_rerank','apple','[{"id":"a","text":"apple"},{"id":"b","text":"banana"},{"id":"c","text":"apple pie"}]','text');
