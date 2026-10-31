@@ -23,6 +23,7 @@
 #include "share/schema/ob_table_schema.h"
 #include "share/ob_rpc_struct.h"
 #include "share/schema/ob_schema_struct.h"
+#include "share/ai_service/ob_ai_column_def.h"
 #include "common/sql_mode/ob_sql_mode.h"
 #include "sql/resolver/ddl/ob_table_stmt.h"
 #include "sql/resolver/ddl/ob_alter_table_stmt.h"
@@ -59,7 +60,10 @@ enum NUMCHILD {
   COLUMN_DEFINITION_NUM_CHILD = 4,
   COLUMN_DEF_NUM_CHILD = 3,
   INDEX_NUM_CHILD = 5,
-  GEN_COLUMN_DEFINITION_NUM_CHILD = 7
+  GEN_COLUMN_DEFINITION_NUM_CHILD = 7,
+  // A column definition that carries an AI COLUMN specification has one more
+  // child: the AI column definition itself.
+  AI_COLUMN_DEFINITION_NUM_CHILD = 5
 };
 
 struct ObColumnResolveStat
@@ -517,7 +521,9 @@ protected:
       const ObTableSchema &table_schema,
       const bool unused_flag = false,
       const bool is_create_table_as = false,
-      const bool allow_has_default = true);
+      const bool allow_has_default = true,
+      share::ObAiColumnDef *ai_column_def = nullptr);
+  int extract_ai_column_expr(ParseNode *ai_column_node, common::ObString &expr);
   int drop_not_null_constraint(const share::schema::ObColumnSchemaV2 &column);
   int resolve_normal_column_attribute_constr_not_null(ObColumnSchemaV2 &column,
                                                       ParseNode *attrs_node,

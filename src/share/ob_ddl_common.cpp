@@ -260,6 +260,7 @@ int ObColumnNameMap::init(const ObTableSchema &orig_table_schema,
         case OB_DDL_DROP_COLUMN: {
           // can only drop original table columns
           if (OB_FAIL(col_name_map_.erase_refactored(orig_column_key))) {
+          } else if (OB_FAIL(erase_ai_hidden_columns_(orig_table_schema, orig_column_name))) {
           }
           break;
         }
@@ -289,10 +290,49 @@ int ObColumnNameMap::init(const ObTableSchema &orig_table_schema,
   return ret;
 }
 
-int ObColumnNameMap::assign(const ObColumnNameMap &other)
+int ObColumnNameMap::erase_ai_hidden_columns_(const ObTableSchema &orig_table_schema,
+                                             const ObString &dropped_column_name)
 {
   int ret = OB_SUCCESS;
-  if (!other.col_name_map_.created()) {
+  // Only an AI column owns hidden columns, so the definition of the column is
+  // looked up first.
+  const ObColumnSchemaV2 *dropped_column =
+      orig_table_schema.get_column_schema(dropped_column_name);
+  if (OB_ISNULL(dropped_column)) {
+    // The column is not part of the table any more.
+  } else if (OB_ISNULL(orig_table_schema.get_ai_column_def(dropped_column->get_column_id()))) {
+    // Not an AI column, so it has no hidden columns.
+  } else {
+    // The hidden columns of an AI column are named after it, so they are found
+    // by their names.
+    static const char *const hidden_column_suffixes[3] = {
+      "__ai_state", "__ai_request", "__ai_spec"
+    };
+    for (int64_t i = 0; OB_SUCC(ret) && i < 3; ++i) {
+      ObString hidden_column_name;
+      const int64_t name_len = dropped_column_name.length()
+                               + static_cast<int64_t>(strlen(hidden_column_suffixes[i]));
+      char *buf = static_cast<char *>(allocator_.alloc(name_len + 1));
+      if (OB_ISNULL(buf)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        MEMCPY(buf, dropped_column_name.ptr(), dropped_column_name.length());
+        MEMCPY(buf + dropped_column_name.length(), hidden_column_suffixes[i],
+               strlen(hidden_column_suffixes[i]));
+        buf[name_len] = '\0';
+        hidden_column_name.assign_ptr(buf, name_len);
+        if (OB_FAIL(col_name_map_.erase_refactored(
+                      ObColumnNameHashWrapper(hidden_column_name)))) {
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+int ObColumnNameMap::assign(const ObColumnNameMap &other)
+{
+  int ret = OB_SUCCESS;  if (!other.col_name_map_.created()) {
     ret = OB_NOT_INIT;
   } else if (!col_name_map_.created()) {
     if (OB_FAIL(col_name_map_.create(32, "ColNameMap"))) {

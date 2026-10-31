@@ -19,6 +19,8 @@
 #include "ob_ddl_operator.h"
 #include "share/ob_autoincrement_service.h"
 #include "rootserver/ob_dependency_ddl_helper.h"
+#include "rootserver/ob_ai_column_ddl_handler.h"
+#include "share/ai_service/ob_ai_column_proxy.h"
 #include "lib/encrypt/ob_encrypted_helper.h"
 #include "sql/resolver/ddl/ob_fts_index_builder_util.h"
 #include "sql/resolver/ddl/ob_vec_index_builder_util.h"
@@ -562,7 +564,11 @@ int ObDDLOperator::create_table(ObTableSchema &table_schema,
   } else if (OB_FAIL(schema_service_.gen_new_schema_version(new_schema_version))) {
   } else {
     table_schema.set_schema_version(new_schema_version);
-    if (OB_FAIL(schema_service->get_table_sql_service().create_table(
+    // The hidden columns of an AI column are part of the table, so they have to be
+    // created before the table schema is persisted.
+    if (OB_FAIL(ObAiColumnDDLHandler::create_hidden_columns(table_schema))) {
+      RS_LOG(WARN, "failed to create the hidden columns of the ai columns", K(ret));
+    } else if (OB_FAIL(schema_service->get_table_sql_service().create_table(
         table_schema,
         trans,
         ddl_stmt_str,
@@ -570,6 +576,8 @@ int ObDDLOperator::create_table(ObTableSchema &table_schema,
         is_truncate_table))) {
     } else if (OB_FAIL(sync_version_for_cascade_table(table_schema.get_depend_table_ids(), trans))) {
     } else if (OB_FAIL(sync_version_for_cascade_mock_fk_parent_table(table_schema.get_depend_mock_fk_parent_table_ids(), trans))) {
+    } else if (OB_FAIL(ObAiColumnDDLHandler::insert_ai_columns(trans, table_schema))) {
+      RS_LOG(WARN, "failed to persist the ai column metadata", K(ret));
     }
   }
 
@@ -1296,6 +1304,29 @@ int ObDDLOperator::delete_single_column(ObMySQLTransaction &trans,
   } else if (OB_FAIL(new_table_schema.delete_column(column_name))) {
   } else if (OB_FAIL(schema_service->get_table_sql_service().delete_single_column(
       new_schema_version, trans, new_table_schema, *orig_column, false/*need_record_ddl_operation*/))) {
+  } else if (OB_FAIL(drop_ai_column_of_dropped_column(trans, new_table_schema, *orig_column))) {
+    RS_LOG(WARN, "failed to remove the ai column of the dropped column", K(ret));
+  }
+  return ret;
+}
+
+int ObDDLOperator::drop_ai_column_of_dropped_column(ObMySQLTransaction &trans,
+                                                     ObTableSchema &new_table_schema,
+                                                     const ObColumnSchemaV2 &dropped_column)
+{
+  int ret = OB_SUCCESS;
+  // A dropped AI column takes its hidden columns and its metadata with it.
+  const share::ObAiColumnDef *ai_column_def = new_table_schema.get_ai_column_def(
+      dropped_column.get_column_id());
+  if (OB_ISNULL(ai_column_def)) {
+    // Not an AI column.
+  } else {
+    const uint64_t table_id = new_table_schema.get_table_id();
+    const uint64_t column_id = ai_column_def->get_column_id();
+    if (OB_FAIL(new_table_schema.delete_ai_column_defs_by_column_id(column_id))) {
+    } else if (OB_FAIL(ObAiColumnProxy::delete_ai_column(trans, table_id, column_id))) {
+      RS_LOG(WARN, "failed to remove the ai column metadata", K(ret), K(table_id), K(column_id));
+    }
   }
   return ret;
 }
@@ -2867,6 +2898,14 @@ int ObDDLOperator::drop_table(
     const uint64_t table_id = table_schema.get_table_id();
     if ((table_schema.is_vec_delta_buffer_type() || table_schema.is_hybrid_vec_index_log_type()) &&
                OB_FAIL(ObVectorIndexUtil::remove_dbms_vector_jobs(trans, table_schema.get_table_id()))) {
+    }
+  }
+
+  if (OB_SUCC(ret) && !is_inner_table(table_schema.get_table_id())) {
+    // The metadata of the AI columns of the table is removed together with the
+    // table, so that no stale definition is left behind.
+    if (OB_FAIL(ObAiColumnDDLHandler::delete_ai_columns(trans, table_schema.get_table_id()))) {
+      RS_LOG(WARN, "failed to remove the ai column metadata", K(ret));
     }
   }
 

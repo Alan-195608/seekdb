@@ -194,6 +194,14 @@ public:
                            const int64_t new_schema_version,
                            share::schema::ObTableSchema &new_table_schema,
                            const common::ObString &column_name);
+  /**
+   * Remove the AI column definition and the metadata of a dropped column.
+   *
+   * A dropped AI column takes its hidden columns and its metadata with it.
+   */
+  int drop_ai_column_of_dropped_column(common::ObMySQLTransaction &trans,
+                                        share::schema::ObTableSchema &new_table_schema,
+                                        const share::schema::ObColumnSchemaV2 &dropped_column);
   int batch_update_system_table_columns(
       common::ObMySQLTransaction &trans,
       const share::schema::ObTableSchema &orig_table_schema,

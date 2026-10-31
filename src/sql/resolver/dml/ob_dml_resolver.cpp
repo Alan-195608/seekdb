@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/dml/ai_column_dml.h"
 #include "sql/engine/basic/file_scan_utils.h"
 #include "share/schema/ob_schema_utils.h"
 #include "config_bridge.h"
@@ -1835,6 +1836,7 @@ int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
                                              ObDMLStmt *stmt /* = NULL */)
 {
   int ret = OB_SUCCESS;
+  if (ai_column_internal_sql_active() || ai_column_retry_active()) { include_hidden = true; }
   ObColumnRefRawExpr *col_expr = NULL;
   ObSchemaGetterGuard *schema_guard = NULL;
   ColumnItem column_item;

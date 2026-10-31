@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/ddl/ob_create_table_resolver.h"
+#include "sql/resolver/ddl/ob_ai_column_resolver.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/resolver/ddl/ob_fts_index_builder_util.h"
 #include "sql/rewrite/ob_transform_utils.h"
@@ -670,6 +671,10 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
     }
 
     int64_t resolved_cols_count = resolved_cols.count();
+    // The column references of every AI column of the statement. They are checked
+    // once all the columns are known, so that an AI column which refers to an AI
+    // column defined later in the same statement is rejected as well.
+    ObSEArray<ObAiColumnRef, 4> ai_column_refs;
     // Second pass traversal, use resolved_cols to parse out all column schema and save to table_schema
     // And parse index etc
     for (int32_t i = 0, ele_pos = 0; OB_SUCC(ret) && i < node->num_child_; ++i) {
@@ -689,12 +694,18 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
           common::ObString pk_name;
           // ele_pos + 1, points to the next column_schema
           ++ele_pos;
+          ObAiColumnDef ai_column_def;
+          // A column definition with an AI COLUMN specification carries one more
+          // child than a plain column definition.
+          const bool has_ai_column = AI_COLUMN_DEFINITION_NUM_CHILD == element->num_child_;
           if (OB_FAIL(resolve_column_definition(column, element, stat,
                                                 is_modify_column_visibility,
                                                 pk_name,
                                                 table_schema,
                                                 false,
-                                                is_create_table_as))) {
+                                                is_create_table_as,
+                                                true,
+                                                &ai_column_def))) {
           } else if (OB_FAIL(check_default_value(column.get_cur_default_value(),
                                           session_info_->get_tz_info_wrap(),
                                           NULL,
@@ -834,6 +845,21 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
             }
           }
 
+          // Remember the AI column definition so that the executor can resolve
+          // the AI column without an extra metadata lookup. The hidden columns
+          // of the AI column are created by the root server, because only there
+          // the final table id and the final column ids are known.
+          if (OB_SUCC(ret) && has_ai_column) {
+            ai_column_def.set_column_id(column.get_column_id());
+            if (OB_FAIL(table_schema.add_ai_column_def(ai_column_def))) {
+              LOG_WARN("failed to record the ai column definition", K(ret));
+            } else if (OB_FAIL(ObAiColumnResolver::collect_ai_column_refs(
+                          element->children_[4]->children_[0],
+                          column.get_column_name_str(),
+                          ai_column_refs))) {
+            }
+          }
+
           if (OB_SUCC(ret) && !column.is_invisible_column()) {
             has_visible_col = true;
           }
@@ -881,6 +907,22 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
         // won't be here
         ret = OB_ERR_UNEXPECTED;
         SQL_RESV_LOG(WARN, "unexpected branch", K(ret));
+      }
+    }
+
+    // An AI column must not depend on another AI column of the same table. The names
+    // are taken from the definitions that have just been recorded, so the check also
+    // covers the AI columns that are defined after the referring one.
+    if (OB_SUCC(ret) && ai_column_refs.count() > 0) {
+      ObSEArray<ObString, 4> ai_column_names;
+      const ObIArray<ObAiColumnDef> &ai_column_defs = table_schema.get_ai_column_defs();
+      for (int64_t i = 0; OB_SUCC(ret) && i < ai_column_defs.count(); ++i) {
+        if (OB_FAIL(ai_column_names.push_back(ai_column_defs.at(i).get_column_name()))) {
+        }
+      }
+      if (OB_SUCC(ret)
+          && OB_FAIL(ObAiColumnResolver::check_ai_column_cross_dependency(ai_column_names,
+                                                                          ai_column_refs))) {
       }
     }
 

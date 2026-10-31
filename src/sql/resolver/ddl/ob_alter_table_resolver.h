@@ -18,6 +18,7 @@
 #define OCEANBASE_SQL_OB_ALTER_TABLE_RESOLVER_
 
 #include "sql/resolver/ddl/ob_ddl_resolver.h"
+#include "sql/resolver/ddl/ob_ai_column_resolver.h"
 #include "sql/resolver/ddl/ob_alter_table_stmt.h"
 
 namespace oceanbase
@@ -50,6 +51,7 @@ public:
   virtual ~ObAlterTableResolver();
   virtual int resolve(const ParseNode &parse_tree);
   int resolve_action_list(const ParseNode &node);
+  int resolve_ai_column_retry(const ParseNode &node);
   int resolve_column_options(const ParseNode &node,
                              bool &is_modify_column_visibility,
                              bool &is_drop_column,
@@ -130,7 +132,8 @@ private:
                                             bool &is_modify_column_visibility,
                                             ObIArray<ObColumnSchemaV2 *> &resolved_cols,
                                             const bool unused_flag = false,
-                                            const bool allow_has_default = true);
+                                            const bool allow_has_default = true,
+                                            share::ObAiColumnDef *ai_column_def = nullptr);
   int resolve_alter_column_not_null(share::schema::AlterColumnSchema &column,
                                      const ObColumnSchemaV2 &ori_column);
   int get_table_schema_all_column_schema(ObIArray<ObColumnSchemaV2 *> &resolved_cols,
@@ -213,6 +216,7 @@ private:
   int64_t modify_constraint_times_;
   bool add_not_null_constraint_;
   int64_t add_column_cnt_;
+  common::ObSEArray<ObAiColumnRef, 4> ai_column_refs_;
   DISALLOW_COPY_AND_ASSIGN(ObAlterTableResolver);
 };
 

@@ -476,6 +476,17 @@ public:
   DECLARE_TO_STRING;
 
 private:
+  /**
+   * Remove the hidden columns of a dropped AI column from the map.
+   *
+   * An AI column owns three hidden columns, which are dropped together with it.
+   * They are removed from the map as well, so that the statistics of the hidden
+   * columns are not looked for in the new table.
+   */
+  int erase_ai_hidden_columns_(const schema::ObTableSchema &orig_table_schema,
+                               const ObString &dropped_column_name);
+
+private:
   ObArenaAllocator allocator_;
   common::hash::ObHashMap<schema::ObColumnNameHashWrapper, ObString> col_name_map_;
 

@@ -97,6 +97,7 @@ ROOTSERVER_UNITY_GROUPS = [
             "src/rootserver/ddl_task/ob_ddl_common_rs_impl.cpp",
             "src/rootserver/ob_bootstrap.cpp",
             "src/rootserver/ob_ddl_operator.cpp",
+            "src/rootserver/ob_ai_column_ddl_handler.cpp",
             "src/rootserver/ob_index_builder.cpp",
             "src/rootserver/ob_max_id_cache_adapter.cpp",
             "src/rootserver/ob_partition_creator.cpp",

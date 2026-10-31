@@ -42,6 +42,7 @@
 #include "share/ob_define.h"
 #include "share/schema/ob_schema_struct.h"
 #include "share/schema/ob_trigger_info.h"
+#include "share/ai_service/ob_ai_column_def.h"
 #include "lib/compress/ob_compress_util.h"
 namespace oceanbase
 {
@@ -1154,6 +1155,17 @@ public:
   inline ObViewSchema &get_view_schema() { return view_schema_; }
   inline const ObViewSchema &get_view_schema() const { return view_schema_; }
   inline const common::ObString &get_index_params() const { return index_params_; }
+
+  // AI columns
+  inline const common::ObSArray<share::ObAiColumnDef> &get_ai_column_defs() const { return ai_column_defs_; }
+  inline common::ObSArray<share::ObAiColumnDef> &get_ai_column_defs() { return ai_column_defs_; }
+  inline bool has_ai_column() const { return !ai_column_defs_.empty(); }
+  const share::ObAiColumnDef *get_ai_column_def(const uint64_t column_id) const;
+  const share::ObAiColumnDef *get_ai_column_def_by_name(const common::ObString &column_name) const;
+  int add_ai_column_def(const share::ObAiColumnDef &ai_column_def);
+  int delete_ai_column_defs_by_column_id(const uint64_t column_id);
+  int serialize_ai_column_defs(char *buf, const int64_t buf_len, int64_t &pos) const;
+  int deserialize_ai_column_defs(const char *buf, const int64_t data_len, int64_t &pos);
   inline const common::ObString &get_exec_env() const { return exec_env_; }
   inline int64_t get_lob_inrow_threshold() const { return lob_inrow_threshold_; }
   inline int64_t get_auto_increment_cache_size() const { return auto_increment_cache_size_; }
@@ -1444,6 +1456,12 @@ public:
   int has_generated_column_using_udf_expr(bool &ans) const;
   int generate_new_column_id_map(common::hash::ObHashMap<uint64_t, uint64_t> &column_id_map) const;
   int convert_column_ids_for_ddl(const hash::ObHashMap<uint64_t, uint64_t> &column_id_map);
+  /**
+   * Convert the column ids of the AI columns and of their hidden columns.
+   *
+   * The definition of an AI column that does not exist any more is dropped.
+   */
+  int convert_ai_column_ids(const hash::ObHashMap<uint64_t, uint64_t> &column_id_map);
   int sort_column_array_by_column_id();
   int check_column_array_sorted_by_column_id(const bool skip_rowkey) const;
   int check_has_index_local_storage(ObSchemaGetterGuard &schema_guard, bool &has_local_index) const;
@@ -1656,6 +1674,11 @@ protected:
   // exec_env
   common::ObString exec_env_;
   ObSemiStructEncodingType semistruct_encoding_type_;
+
+  // AI columns of this table. The definitions are kept in the schema so that the
+  // executor can resolve an AI column without an extra metadata lookup, and so
+  // that the definition version travels with the schema.
+  common::ObSArray<share::ObAiColumnDef> ai_column_defs_;
 };
 
 class ObPrintableTableSchema final : public ObTableSchema

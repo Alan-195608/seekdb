@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/dml/ai_column_dml.h"
 #include "ob_del_upd_resolver.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
 #include "sql/resolver/dml/ob_update_stmt.h"
@@ -33,6 +34,22 @@ using namespace share::schema;
 using namespace pl;
 namespace sql
 {
+namespace {
+int reject_ai_column_assignment(ObSchemaChecker &checker, const TableItem &table, uint64_t column_id)
+{
+  int ret = OB_SUCCESS;
+  const ObTableSchema *schema = nullptr;
+  if (!ai_column_internal_sql_active() && table.is_basic_table()) {
+    if (OB_FAIL(checker.get_table_schema(table.ref_id_, schema))) {
+    } else if (schema != nullptr && schema->get_ai_column_def(column_id) != nullptr) {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "explicit assignment to AI column");
+    }
+  }
+  return ret;
+}
+}
+
 
 int ObTableAssignment::expand_expr(ObRawExprFactory &expr_factory,
                                    const ObIArray<ObAssignment> &assigns,
@@ -118,6 +135,9 @@ int ObDelUpdResolver::resolve_assignments(const ParseNode &parse_node,
             }
           }
         }
+      }
+      if (OB_SUCC(ret)) {
+        ret = reject_ai_column_assignment(*schema_checker_, *table, ref_expr->get_column_id());
       }
       if (OB_SUCC(ret) && T_INSERT_SCOPE == scope) {
         if (OB_FAIL(mock_values_column_ref(ref_expr))) {
@@ -2158,6 +2178,7 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
         ret = OB_ERR_UNEXPECTED;
       } else if (FALSE_IT(column_expr = static_cast<ObColumnRefRawExpr*>(ref_expr))) {
         //do nothing
+      } else if (OB_FAIL(reject_ai_column_assignment(*schema_checker_, *table_item, column_expr->get_column_id()))) {
       } else if (OB_FAIL(check_insert_column_duplicate(column_expr->get_column_id(), is_duplicate))) {
       } else if (is_duplicate) {
         ret = OB_ERR_FIELD_SPECIFIED_TWICE;

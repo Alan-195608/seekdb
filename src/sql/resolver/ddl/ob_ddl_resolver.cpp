@@ -27,6 +27,7 @@
 #include "sql/rewrite/ob_transform_pre_process.h"
 #include "sql/resolver/ddl/ob_vec_index_builder_util.h"
 #include "sql/resolver/ddl/ob_fts_parser_resolver.h"
+#include "sql/resolver/ddl/ob_ai_column_resolver.h"
 #include "sql/session/ob_local_session_var.h"
 #include "query/ddl/ob_dynamic_partition_policy.h"
 #include "share/rc/ob_server_runtime.h"
@@ -1762,6 +1763,27 @@ int ObDDLResolver::resolve_column_name(ObColumnSchemaV2 &column,
   return ret;
 }
 
+int ObDDLResolver::extract_ai_column_expr(ParseNode *ai_column_node, common::ObString &expr)
+{
+  int ret = OB_SUCCESS;
+  expr.reset();
+  if (OB_ISNULL(ai_column_node) || T_AI_COLUMN_DEF != ai_column_node->type_
+      || 2 != ai_column_node->num_child_ || OB_ISNULL(ai_column_node->children_[0])) {
+    ret = OB_ERR_UNEXPECTED;
+    SQL_RESV_LOG(WARN, "invalid ai column node", K(ret));
+  } else {
+    ParseNode *expr_node = ai_column_node->children_[0];
+    if (expr_node->str_len_ > 0 && OB_NOT_NULL(expr_node->str_value_)) {
+      // The parser keeps the text of the expression on the node itself.
+      expr.assign_ptr(expr_node->str_value_, expr_node->str_len_);
+    } else {
+      ret = OB_ERR_UNEXPECTED;
+      SQL_RESV_LOG(WARN, "ai column expression has no text", K(ret));
+    }
+  }
+  return ret;
+}
+
 int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
                                              ParseNode *node, /* column_definition */
                                              ObColumnResolveStat &resolve_stat,
@@ -1770,7 +1792,8 @@ int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
                                              const ObTableSchema &table_schema,
                                              const bool unused_flag,
                                              const bool is_create_table_as,
-                                             const bool allow_has_default)
+                                             const bool allow_has_default,
+                                             ObAiColumnDef *ai_column_def)
 {
   int ret = OB_SUCCESS;
   bool is_modify_column = stmt::T_ALTER_TABLE == stmt_->get_stmt_type()
@@ -1924,12 +1947,35 @@ int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
                                                          allow_has_default))) {
       }
     }
+    // An AI column carries its own definition in the last child slot of the
+    // column definition node.
+    if (OB_SUCC(ret) && AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
+      ParseNode *ai_column_node = node->children_[4];
+      ObString normalized_expr;
+      if (OB_ISNULL(ai_column_node) || T_AI_COLUMN_DEF != ai_column_node->type_) {
+        ret = OB_ERR_UNEXPECTED;
+        SQL_RESV_LOG(WARN, "invalid ai column node in column definition", K(ret));
+      } else if (column.is_generated_column()) {
+        // A generated column already owns its expression; an AI column cannot
+        // be generated at the same time.
+        ret = OB_AI_COLUMN_INVALID_DEFINITION;
+        LOG_USER_ERROR(OB_AI_COLUMN_INVALID_DEFINITION,
+                       "an AI column cannot be a generated column");
+      } else if (OB_FAIL(extract_ai_column_expr(ai_column_node, normalized_expr))) {
+      } else if (OB_NOT_NULL(ai_column_def)
+                 && OB_FAIL(ObAiColumnResolver::resolve_ai_column_def(
+                              *allocator_, ai_column_node, column, normalized_expr, *ai_column_def))) {
+      }
+    }
     // Specify the position of the column for add column syntax
     if (OB_SUCC(ret)) {
       ParseNode *pos_node = NULL;
       if (OB_UNLIKELY(GEN_COLUMN_DEFINITION_NUM_CHILD == node->num_child_)) {
         // generated column with pos_column
         pos_node = node->children_[5];
+      } else if (OB_UNLIKELY(AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_)) {
+        // AI column with pos_column
+        pos_node = node->children_[3];
       } else {
         // normal column with pos_column
         pos_node = node->children_[3];

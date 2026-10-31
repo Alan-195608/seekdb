@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX RS
 #include "rootserver/parallel_ddl/ob_table_helper.h"
 #include "rootserver/ob_index_builder.h"
+#include "rootserver/ob_ai_column_ddl_handler.h"
 #include "rootserver/ob_lob_meta_builder.h"
 #include "rootserver/ob_lob_piece_builder.h"
 #include "rootserver/ob_table_creator.h"
@@ -206,10 +207,26 @@ int ObTableHelper::create_tables_(const ObString *ddl_stmt_str)
                                                                  new_table.get_exec_env()))) {
       }
     } // end for
+    // The hidden columns of an AI column are part of the table, so they have to be
+    // created before the table schema is persisted.
+    for (int64_t i = 0; OB_SUCC(ret) && i < new_tables_.count(); i++) {
+      if (OB_FAIL(ObAiColumnDDLHandler::create_hidden_columns(new_tables_.at(i)))) {
+        RS_LOG(WARN, "failed to create the hidden columns of the ai columns", K(ret));
+      }
+    }
     if (FAILEDx(schema_service_impl->get_table_sql_service().batch_create_table(new_tables_,
                 get_trans_(),
                 ddl_stmt_str,
                 true/*sync_schema_version_for_last_table*/))) {
+    } else {
+      // The metadata of the AI columns is written in the same transaction as the
+      // table, so that the metadata and the schema change become visible at the
+      // same time.
+      for (int64_t i = 0; OB_SUCC(ret) && i < new_tables_.count(); i++) {
+        if (OB_FAIL(ObAiColumnDDLHandler::insert_ai_columns(get_trans_(), new_tables_.at(i)))) {
+          RS_LOG(WARN, "failed to persist the ai column metadata", K(ret));
+        }
+      }
     }
   }
   return ret;

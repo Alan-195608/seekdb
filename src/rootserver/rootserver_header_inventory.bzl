@@ -33,6 +33,7 @@ ROOTSERVER_PUBLIC_HEADERS = [
     "freeze/ob_major_merge_scheduler.h",
     "ob_bootstrap.h",
     "ob_ddl_operator.h",
+    "ob_ai_column_ddl_handler.h",
     "ob_ddl_service.h",
     "ob_ddl_service_launcher.h",
     "ob_debug_sync_broadcaster_adapter.h",

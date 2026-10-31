@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SQL_ENG
 
 #include "ob_table_modify_op.h"
+#include "sql/engine/dml/ai_column_dml.h"
 #include "share/ob_autoincrement_service.h"
 #include "query/session/ob_inner_sql_connection_access.h"
 #include "sql/engine/ob_physical_plan.h"
@@ -1058,6 +1059,14 @@ int ObTableModifyOp::submit_all_dml_task()
     } else if (OB_FAIL(dml_rtctx_.das_ref_.close_all_task())) {
     } else if (OB_FAIL(ObDMLService::handle_after_row_processing(this, &get_dml_modify_row_list()))) {
     } else {
+      if (!ai_column_internal_sql_active()) {
+        common::ObTableID table_loc_id = 0;
+        common::ObTableID ref_table_id = 0;
+        if (OB_FAIL(get_spec().get_single_table_loc_id(table_loc_id, ref_table_id))) {
+        } else if (OB_FAIL(SMART_CALL(synchronize_ai_columns(*this, ctx_, ref_table_id)))) {
+          LOG_WARN("failed to synchronize transactional AI column requests", K(ret), K(ref_table_id));
+        }
+      }
       dml_modify_rows_.clear();
       dml_rtctx_.reuse();
     }

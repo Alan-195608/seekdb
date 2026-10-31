@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_ENG
+#include "observer/ai_service/ob_ai_column_worker.h"
 #include "ob_ai_func_utils.h"
 #include "ob_ai_func_client.h"
 #include <cmath>
@@ -1313,7 +1314,7 @@ int ObAIFuncModel::call_completion(ObString &prompt, ObJsonObject *config, ObStr
   ObJsonObject *response = nullptr;
   ObIJsonBase *result_base = nullptr;
   ObAIFuncIComplete *complete_provider = nullptr;
-  ObString prompt_str;
+  ObString prompt_str = ObString::make_string(observer::ai_column_result_hint());
   ObString result_str;
   ObAIFuncClient client;
   ObString unencrypted_access_key;

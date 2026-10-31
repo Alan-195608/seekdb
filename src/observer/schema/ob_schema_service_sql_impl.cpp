@@ -18,6 +18,8 @@
 #include "config_bridge.h"
 #include "ob_schema_service_sql_impl.h"
 #include "share/ob_global_stat_proxy.h"
+#include "share/ai_service/ob_ai_column_def.h"
+#include "share/ai_service/ob_ai_column_proxy.h"
 #include "share/ob_share_util.h"
 // TODO, move basic structs to ob_schema_struct.h
 #include "observer/schema/ob_schema_retrieve_utils.h"
@@ -143,6 +145,40 @@ using namespace oceanbase;
 using namespace oceanbase::common;
 using namespace oceanbase::common::sqlclient;
 using namespace oceanbase::sql;
+
+// Persisted definitions must also be present in schemas loaded after a cache
+// eviction or restart. Only tables carrying AI hidden columns need this lookup;
+// in particular, loading the metadata table itself must not recurse into it.
+static int load_persisted_ai_column_defs(ObISQLClient &sql_client, ObTableSchema &table)
+{
+  int ret = OB_SUCCESS;
+  bool has_ai_hidden_column = false;
+  const char suffix[] = "__ai_state";
+  for (ObTableSchema::const_column_iterator it = table.column_begin();
+       !has_ai_hidden_column && it != table.column_end(); ++it) {
+    if (NULL != *it && (*it)->is_hidden()) {
+      const ObString &name = (*it)->get_column_name_str();
+      has_ai_hidden_column = name.length() > sizeof(suffix) - 1
+          && 0 == MEMCMP(name.ptr() + name.length() - (sizeof(suffix) - 1),
+                         suffix, sizeof(suffix) - 1);
+    }
+  }
+  if (has_ai_hidden_column && !table.has_ai_column()) {
+    ObSArray<ObAiColumnDef> defs;
+    if (OB_ISNULL(table.get_allocator())) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_FAIL(ObAiColumnProxy::select_ai_columns(*table.get_allocator(),
+                       sql_client, table.get_table_id(), defs))) {
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < defs.count(); ++i) {
+      if (NULL != table.get_column_schema(defs.at(i).get_column_id())
+          && OB_FAIL(table.add_ai_column_def(defs.at(i)))) {
+      }
+    }
+  }
+  return ret;
+}
+
 
 template<typename T>
 int ObSchemaServiceSQLImpl::retrieve_schema_version(T &result, int64_t &schema_version)
@@ -729,6 +765,7 @@ int ObSchemaServiceSQLImpl::get_not_core_table_schemas(
     for (int64_t i = 0; OB_SUCC(ret) && i < not_core_schemas.count(); ++i) {
       if (OB_ISNULL(not_core_schemas.at(i))) {
         ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(load_persisted_ai_column_defs(sql_client, *not_core_schemas.at(i)))) {
       } else if (OB_FAIL(ObSchemaRetrieveUtils::cascaded_generated_column(*not_core_schemas.at(i)))) {
       }
     }
@@ -4097,6 +4134,9 @@ int ObSchemaServiceSQLImpl::get_not_core_table_schema(
   if (OB_SUCC(ret) && !is_schema_fetch_dependency
       && OB_FAIL(fetch_trigger_list(schema_status, table_id, schema_version,
                                     sql_client, *table_schema))) {
+  }
+  if (OB_SUCC(ret) && NULL != table_schema
+      && OB_FAIL(load_persisted_ai_column_defs(sql_client, *table_schema))) {
   }
   return ret;
 }

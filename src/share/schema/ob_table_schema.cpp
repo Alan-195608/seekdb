@@ -1329,6 +1329,17 @@ int ObTableSchema::assign(const ObTableSchema &src_schema)
     semistruct_encoding_type_ = src_schema.semistruct_encoding_type_;
   }
 
+  if (OB_SUCC(ret)) {
+    ai_column_defs_.reset();
+    for (int64_t i = 0; OB_SUCC(ret) && i < src_schema.ai_column_defs_.count(); ++i) {
+      share::ObAiColumnDef new_def;
+      new_def.set_allocator(allocator_);
+      if (OB_FAIL(new_def.assign(*allocator_, src_schema.ai_column_defs_.at(i)))) {
+      } else if (OB_FAIL(ai_column_defs_.push_back(new_def))) {
+      }
+    }
+  }
+
   if (OB_FAIL(ret)) {
   }
   return ret;
@@ -1778,6 +1789,60 @@ bool ObTableSchema::has_check_constraint() const
   }
 
   return bool_ret;
+}
+
+const share::ObAiColumnDef *ObTableSchema::get_ai_column_def(const uint64_t column_id) const
+{
+  const share::ObAiColumnDef *ret_def = NULL;
+  for (int64_t i = 0; i < ai_column_defs_.count(); ++i) {
+    if (ai_column_defs_.at(i).get_column_id() == column_id) {
+      ret_def = &ai_column_defs_.at(i);
+      break;
+    }
+  }
+  return ret_def;
+}
+
+const share::ObAiColumnDef *ObTableSchema::get_ai_column_def_by_name(const common::ObString &column_name) const
+{
+  const share::ObAiColumnDef *ret_def = NULL;
+  if (!column_name.empty()) {
+    for (int64_t i = 0; i < ai_column_defs_.count(); ++i) {
+      if (0 == ai_column_defs_.at(i).get_column_name().case_compare(column_name)) {
+        ret_def = &ai_column_defs_.at(i);
+        break;
+      }
+    }
+  }
+  return ret_def;
+}
+
+int ObTableSchema::add_ai_column_def(const share::ObAiColumnDef &ai_column_def)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(ai_column_defs_.push_back(ai_column_def))) {
+    LOG_WARN("failed to add ai column def", K(ret));
+  } else {
+    ai_column_defs_.at(ai_column_defs_.count() - 1).set_allocator(allocator_);
+  }
+  return ret;
+}
+
+int ObTableSchema::delete_ai_column_defs_by_column_id(const uint64_t column_id)
+{
+  int ret = OB_SUCCESS;
+  int64_t i = 0;
+  while (i < ai_column_defs_.count()) {
+    if (ai_column_defs_.at(i).get_column_id() == column_id) {
+      if (OB_FAIL(ai_column_defs_.remove(i))) {
+        LOG_WARN("failed to remove ai column def", K(ret), K(column_id));
+        break;
+      }
+    } else {
+      ++i;
+    }
+  }
+  return ret;
 }
 
 int ObTableSchema::delete_column(const common::ObString &column_name)
@@ -2526,6 +2591,12 @@ int64_t ObTableSchema::get_convert_size() const
   convert_size += index_params_.length() + 1;
 
   convert_size += semistruct_encoding_type_.get_deep_copy_size();
+
+  convert_size += ai_column_defs_.get_data_size();
+  convert_size += serialization::encoded_length_vi64(static_cast<int64_t>(ai_column_defs_.count()));
+  for (int64_t i = 0; i < ai_column_defs_.count(); ++i) {
+    convert_size += ai_column_defs_.at(i).get_serialize_size();
+  }
   return convert_size;
 }
 
@@ -2595,6 +2666,7 @@ void ObTableSchema::reset()
 
   index_params_.reset();
   exec_env_.reset();
+  ai_column_defs_.reset();
   name_generated_type_ = GENERATED_TYPE_UNKNOWN;
   lob_inrow_threshold_ = OB_DEFAULT_LOB_INROW_THRESHOLD;
   auto_increment_cache_size_ = 0;
@@ -2888,8 +2960,42 @@ int ObTableSchema::convert_column_ids_for_ddl(const ObHashMap<uint64_t, uint64_t
   } else if (OB_FAIL(convert_column_ids_in_info(column_id_map, shadow_rowkey_info_))) {
   } else if (OB_FAIL(convert_column_ids_in_info(column_id_map, partition_key_info_))) {
   } else if (OB_FAIL(convert_column_ids_in_info(column_id_map, subpartition_key_info_))) {
+  } else if (OB_FAIL(convert_ai_column_ids(column_id_map))) {
   } else {
     // index, foreign key will be converted when manually rebuilt
+  }
+  return ret;
+}
+
+int ObTableSchema::convert_ai_column_ids(const ObHashMap<uint64_t, uint64_t> &column_id_map)
+{
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < ai_column_defs_.count(); ++i) {
+    ObAiColumnDef &ai_column_def = ai_column_defs_.at(i);
+    uint64_t new_column_id = 0;
+    uint64_t new_state_column_id = 0;
+    uint64_t new_request_column_id = 0;
+    uint64_t new_result_spec_column_id = 0;
+    if (OB_FAIL(column_id_map.get_refactored(ai_column_def.get_column_id(), new_column_id))) {
+      // The AI column does not exist any more, so its definition is dropped
+      // together with its metadata.
+      if (OB_FAIL(ai_column_defs_.remove(i))) {
+        LOG_WARN("failed to remove ai column def", K(ret));
+        break;
+      }
+      --i;
+    } else if (OB_FAIL(column_id_map.get_refactored(ai_column_def.get_state_column_id(),
+                                                   new_state_column_id))) {
+    } else if (OB_FAIL(column_id_map.get_refactored(ai_column_def.get_request_column_id(),
+                                                   new_request_column_id))) {
+    } else if (OB_FAIL(column_id_map.get_refactored(ai_column_def.get_result_spec_column_id(),
+                                                   new_result_spec_column_id))) {
+    } else {
+      ai_column_def.set_column_id(new_column_id);
+      ai_column_def.set_state_column_id(new_state_column_id);
+      ai_column_def.set_request_column_id(new_request_column_id);
+      ai_column_def.set_result_spec_column_id(new_result_spec_column_id);
+    }
   }
   return ret;
 }
@@ -5406,6 +5512,12 @@ OB_DEF_SERIALIZE(ObTableSchema)
   OB_UNIS_ENCODE(parser_properties_);
   OB_UNIS_ENCODE(semistruct_encoding_type_);
   OB_UNIS_ENCODE(micro_block_format_version_);
+  // !!! FOR STATIC CHECKER BEGIN
+  // THE FOLLOWING CODE CANNOT BE DESCRIBED USING SERIALIZE MACROS. THEY ARE EQUIVALENT TO THESE CODES:
+  // OB_UNIS_ENCODE_ARRAY_POINTER(ai_column_defs_, ai_column_def_cnt_);
+  if (FAILEDx(serialize_ai_column_defs(buf, buf_len, pos))) {
+  }
+  // !!! FOR STATIC CHECKER END
   // !!! end static check
   /*
    * Add deserialized members before this end static check comment
@@ -5432,10 +5544,47 @@ OB_DEF_SERIALIZE(ObTableSchema)
   return ret;
 }
 
-int ObTableSchema::serialize_columns(char *buf, const int64_t data_len,
-                                     int64_t &pos) const
+int ObTableSchema::serialize_ai_column_defs(char *buf, const int64_t buf_len,
+                                            int64_t &pos) const
 {
   int ret = OB_SUCCESS;
+  const int64_t cnt = ai_column_defs_.count();
+  if (OB_FAIL(serialization::encode_vi64(buf, buf_len, pos, cnt))) {
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < cnt; ++i) {
+      if (OB_FAIL(ai_column_defs_.at(i).serialize(buf, buf_len, pos))) {
+        LOG_WARN("failed to serialize ai column def", K(ret), K(i));
+      }
+    }
+  }
+  return ret;
+}
+
+int ObTableSchema::deserialize_ai_column_defs(const char *buf, const int64_t data_len,
+                                              int64_t &pos)
+{
+  int ret = OB_SUCCESS;
+  int64_t cnt = 0;
+  ai_column_defs_.reset();
+  if (OB_FAIL(serialization::decode_vi64(buf, data_len, pos, &cnt))) {
+  } else if (cnt < 0) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < cnt; ++i) {
+      share::ObAiColumnDef ai_column_def;
+      ai_column_def.set_allocator(allocator_);
+      if (OB_FAIL(ai_column_def.deserialize(buf, data_len, pos))) {
+        LOG_WARN("failed to deserialize ai column def", K(ret), K(i));
+      } else if (OB_FAIL(ai_column_defs_.push_back(ai_column_def))) {
+      }
+    }
+  }
+  return ret;
+}
+
+int ObTableSchema::serialize_columns(char *buf, const int64_t data_len,
+                                     int64_t &pos) const
+{  int ret = OB_SUCCESS;
   if (OB_FAIL(serialization::encode_vi64(buf, data_len, pos, column_cnt_))) {
   }
   for (int64_t i = 0; OB_SUCC(ret) && i < column_cnt_; ++i) {
@@ -5609,6 +5758,12 @@ OB_DEF_DESERIALIZE(ObTableSchema)
   OB_UNIS_DECODE_AND_FUNC(parser_properties_, deep_copy_str);
   OB_UNIS_DECODE(semistruct_encoding_type_);
   OB_UNIS_DECODE(micro_block_format_version_);
+  // !!! FOR STATIC CHECKER BEGIN
+  // THE FOLLOWING CODE CANNOT BE DESCRIBED USING SERIALIZE MACROS. THEY ARE EQUIVALENT TO THESE CODES:
+  // OB_UNIS_DECODE_ARRAY_POINTER(ai_column_defs_, ai_column_def_cnt_);
+  if (FAILEDx(deserialize_ai_column_defs(buf, data_len, pos))) {
+  }
+  // !!! FOR STATIC CHECKER END
   // !!! end static check
   /*
    * Add deserialized members before this end static check comment
@@ -5719,6 +5874,17 @@ OB_DEF_SERIALIZE_SIZE(ObTableSchema)
   OB_UNIS_ADD_LEN(parser_properties_);
   OB_UNIS_ADD_LEN(semistruct_encoding_type_);
   OB_UNIS_ADD_LEN(micro_block_format_version_);
+  // !!! FOR STATIC CHECKER BEGIN
+  // THE FOLLOWING CODE CANNOT BE DESCRIBED USING SERIALIZE MACROS. THEY ARE EQUIVALENT TO THESE CODES:
+  // OB_UNIS_ADD_LEN_ARRAY_POINTER(ai_column_defs_, ai_column_def_cnt_);
+  // The definitions are written by serialize_ai_column_defs, which writes the
+  // number of definitions followed by the exact number of bytes that
+  // get_serialize_size reports.
+  len += serialization::encoded_length_vi64(static_cast<int64_t>(ai_column_defs_.count()));
+  for (int64_t i = 0; i < ai_column_defs_.count(); ++i) {
+    len += ai_column_defs_.at(i).get_serialize_size();
+  }
+  // !!! FOR STATIC CHECKER END
   // !!! end static check
   /*
    * Add deserialized members before this end static check comment

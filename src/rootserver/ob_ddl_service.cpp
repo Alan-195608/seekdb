@@ -20,6 +20,8 @@
 #include "config_bridge.h"
 #include <algorithm>
 #include "rootserver/ob_dependency_ddl_helper.h"
+#include "rootserver/ob_ai_column_ddl_handler.h"
+#include "share/ai_service/ob_ai_column_proxy.h"
 #include "share/ob_sys_time_zone_util.h"
 
 #include "ob_ddl_service.h"
@@ -7712,6 +7714,9 @@ int ObDDLService::drop_column_update_new_table(
     ret = OB_ERR_SYS;
   } else if (OB_ISNULL(new_origin_col)) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(drop_ai_column_of_dropped_column_(new_table_schema, *new_origin_col))) {
+    // A dropped AI column takes its hidden columns with it.
+    RS_LOG(WARN, "failed to remove the hidden columns of the dropped ai column", K(ret));
   } else {
     ObColumnSchemaV2 *next_col = new_table_schema.get_column_schema_by_prev_next_id(new_origin_col->get_next_column_id());
     if (OB_ISNULL(next_col)) {
@@ -7727,6 +7732,147 @@ int ObDDLService::drop_column_update_new_table(
 }
 
 // update relevant inner table if all of schema_guard, ddl_operator and trans are not null
+int ObDDLService::drop_ai_column_of_dropped_column_(
+    share::schema::ObTableSchema &new_table_schema,
+    const share::schema::ObColumnSchemaV2 &dropped_column)
+{
+  int ret = OB_SUCCESS;
+  // A dropped AI column takes its hidden columns with it, because they only
+  // carry the state of the AI column.
+  const share::ObAiColumnDef *ai_column_def = new_table_schema.get_ai_column_def(
+      dropped_column.get_column_id());
+  if (OB_ISNULL(ai_column_def)) {
+    // Not an AI column.
+  } else {
+    const uint64_t hidden_column_ids[3] = {
+      ai_column_def->get_state_column_id(),
+      ai_column_def->get_request_column_id(),
+      ai_column_def->get_result_spec_column_id()
+    };
+    for (int64_t i = 0; OB_SUCC(ret) && i < 3; ++i) {
+      if (OB_INVALID_ID == hidden_column_ids[i]) {
+        continue;
+      }
+      const share::schema::ObColumnSchemaV2 *hidden_column =
+          new_table_schema.get_column_schema(hidden_column_ids[i]);
+      if (OB_ISNULL(hidden_column)) {
+        continue;
+      }
+      if (OB_FAIL(new_table_schema.delete_column(hidden_column->get_column_name_str()))) {
+        RS_LOG(WARN, "failed to remove the hidden column of the dropped ai column",
+               K(ret), K(hidden_column_ids[i]));
+      }
+    }
+    if (OB_SUCC(ret)) {
+      if (OB_FAIL(new_table_schema.delete_ai_column_defs_by_column_id(dropped_column.get_column_id()))) {
+        RS_LOG(WARN, "failed to remove the ai column definition", K(ret));
+      }
+    }
+  }
+  return ret;
+}
+
+int ObDDLService::move_ai_columns_to_hidden_table_(
+    common::ObMySQLTransaction &trans,
+    const share::schema::ObTableSchema &orig_table_schema,
+    const share::schema::ObTableSchema &hidden_table_schema)
+{
+  int ret = OB_SUCCESS;
+  // The hidden table takes the place of the original table, so the metadata of
+  // the AI columns has to be written for the hidden table. The definitions of
+  // the AI columns are not carried by the refreshed table schema, so they are
+  // read from the metadata of the original table.
+  ObArenaAllocator allocator("AiColMove");
+  ObSArray<share::ObAiColumnDef> orig_ai_column_defs;
+  if (OB_FAIL(ObAiColumnProxy::select_ai_columns(allocator, trans,
+                                                 orig_table_schema.get_table_id(),
+                                                 orig_ai_column_defs))) {
+    RS_LOG(WARN, "failed to read the ai column metadata", K(ret),
+           K(orig_table_schema.get_table_id()));
+  } else {
+    // The hidden table has the columns of the original table with the same
+    // names, so the definition of an AI column is carried over by its name. The
+    // hidden columns of the AI column are part of the hidden table as well, so
+    // their ids are read from it.
+    for (int64_t i = 0; OB_SUCC(ret) && i < orig_ai_column_defs.count(); ++i) {
+      const share::ObAiColumnDef &orig_ai_column_def = orig_ai_column_defs.at(i);
+      const share::schema::ObColumnSchemaV2 *ai_column =
+          hidden_table_schema.get_column_schema(orig_ai_column_def.get_column_name());
+      if (OB_ISNULL(ai_column)) {
+        // The AI column does not exist in the new table any more, so its
+        // metadata is removed and no orphan row survives the change.
+        if (OB_FAIL(ObAiColumnProxy::delete_ai_column(trans,
+                                                      orig_table_schema.get_table_id(),
+                                                      orig_ai_column_def.get_column_id()))) {
+          RS_LOG(WARN, "failed to remove the ai column metadata", K(ret),
+                 "column_name", orig_ai_column_def.get_column_name());
+        }
+        continue;
+      }
+      share::ObAiColumnDef new_ai_column_def = orig_ai_column_def;
+      new_ai_column_def.set_table_id(hidden_table_schema.get_table_id());
+      new_ai_column_def.set_column_id(ai_column->get_column_id());
+      if (OB_FAIL(set_hidden_column_ids_(hidden_table_schema, new_ai_column_def))) {
+        RS_LOG(WARN, "failed to read the hidden columns of the ai column", K(ret),
+               "column_name", orig_ai_column_def.get_column_name());
+      } else if (OB_FAIL(ObAiColumnProxy::insert_ai_column(trans, new_ai_column_def))) {
+        RS_LOG(WARN, "failed to persist the ai column metadata", K(ret),
+               K(hidden_table_schema.get_table_id()),
+               "column_name", orig_ai_column_def.get_column_name());
+      }
+    }
+    // The metadata of the original table is removed: the AI columns now belong
+    // to the hidden table, which took the place of the original table.
+    if (OB_SUCC(ret) && orig_ai_column_defs.count() > 0) {
+      if (OB_FAIL(ObAiColumnProxy::delete_ai_columns_of_table(trans,
+                                                            orig_table_schema.get_table_id()))) {
+        RS_LOG(WARN, "failed to remove the ai column metadata", K(ret),
+               K(orig_table_schema.get_table_id()));
+      }
+    }
+  }
+  return ret;
+}
+
+int ObDDLService::set_hidden_column_ids_(
+    const share::schema::ObTableSchema &table_schema,
+    share::ObAiColumnDef &ai_column_def)
+{
+  int ret = OB_SUCCESS;
+  // The hidden columns of the AI column are named after it, so their ids are
+  // read from the schema by their names.
+  static const char *const hidden_column_suffixes[3] = {
+    "__ai_state", "__ai_request", "__ai_spec"
+  };
+  uint64_t hidden_column_ids[3] = {OB_INVALID_ID, OB_INVALID_ID, OB_INVALID_ID};
+  ObArenaAllocator allocator("AiColHidden");
+  for (int64_t i = 0; OB_SUCC(ret) && i < 3; ++i) {
+    ObString hidden_column_name;
+    if (OB_FAIL(ObAiColumnDDLHandler::build_hidden_column_name(
+                  allocator,
+                  ai_column_def.get_column_name(),
+                  hidden_column_suffixes[i],
+                  hidden_column_name))) {
+    } else {
+      const share::schema::ObColumnSchemaV2 *hidden_column =
+          table_schema.get_column_schema(hidden_column_name);
+      if (OB_ISNULL(hidden_column)) {
+        ret = OB_ERR_UNEXPECTED;
+        RS_LOG(WARN, "the hidden column of the ai column does not exist", K(ret),
+               "column_name", ai_column_def.get_column_name());
+      } else {
+        hidden_column_ids[i] = hidden_column->get_column_id();
+      }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    ai_column_def.set_state_column_id(hidden_column_ids[0]);
+    ai_column_def.set_request_column_id(hidden_column_ids[1]);
+    ai_column_def.set_result_spec_column_id(hidden_column_ids[2]);
+  }
+  return ret;
+}
+
 int ObDDLService::add_new_column_to_table_schema(
     const ObTableSchema &origin_table_schema,
     const AlterTableSchema &alter_table_schema,
@@ -7828,6 +7974,100 @@ int ObDDLService::add_new_column_to_table_schema(
         if (OB_FAIL(ddl_operator->insert_single_column(*trans,
                 new_table_schema, alter_column_schema))) {
         }
+      }
+    }
+  }
+  if (OB_SUCC(ret) && update_inner_table) {
+    // An added AI column owns three hidden columns, which have to be created and
+    // persisted together with the AI column itself.
+    if (OB_FAIL(add_ai_column_hidden_columns_(new_table_schema,
+                                              alter_table_schema,
+                                              alter_column_schema,
+                                              *ddl_operator,
+                                              *trans))) {
+      RS_LOG(WARN, "failed to create the hidden columns of the added ai column", K(ret));
+    }
+  }
+  return ret;
+}
+
+int ObDDLService::add_ai_column_hidden_columns_(
+    ObTableSchema &new_table_schema,
+    const AlterTableSchema &alter_table_schema,
+    const AlterColumnSchema &alter_column_schema,
+    ObDDLOperator &ddl_operator,
+    common::ObMySQLTransaction &trans)
+{
+  int ret = OB_SUCCESS;
+  // The resolver records the AI column definition of an added column in the
+  // alter table schema, because the added column itself is not part of the table
+  // schema yet.
+  const share::ObAiColumnDef *ai_column_def = alter_table_schema.get_ai_column_def_by_name(
+      alter_column_schema.get_column_name_str());
+  if (OB_ISNULL(ai_column_def)) {
+    // Not an AI column.
+  } else if (OB_FAIL(new_table_schema.add_ai_column_def(*ai_column_def))) {
+    RS_LOG(WARN, "failed to record the ai column definition", K(ret));
+  } else {
+    ObSArray<share::ObAiColumnDef> &ai_column_defs = new_table_schema.get_ai_column_defs();
+    share::ObAiColumnDef &new_ai_column_def = ai_column_defs.at(ai_column_defs.count() - 1);
+    new_ai_column_def.set_column_id(alter_column_schema.get_column_id());
+    // The hidden columns are appended after the added column, so they get the
+    // column ids that follow it.
+    const uint64_t first_hidden_column_id = new_table_schema.get_max_used_column_id() + 1;
+    ObString state_name;
+    ObString request_name;
+    ObString result_spec_name;
+    ObIAllocator *allocator = new_table_schema.get_allocator();
+    ObColumnSchemaV2 state_column;
+    ObColumnSchemaV2 request_column;
+    ObColumnSchemaV2 result_spec_column;
+    if (OB_ISNULL(allocator)) {
+      ret = OB_ERR_UNEXPECTED;
+      RS_LOG(WARN, "the table schema has no allocator", K(ret));
+    } else if (OB_FAIL(ObAiColumnDDLHandler::build_hidden_column_name(*allocator,
+                                                    new_ai_column_def.get_column_name(),
+                                                    "__ai_state", state_name))) {
+    } else if (OB_FAIL(ObAiColumnDDLHandler::build_hidden_column_name(*allocator,
+                                                    new_ai_column_def.get_column_name(),
+                                                    "__ai_request", request_name))) {
+    } else if (OB_FAIL(ObAiColumnDDLHandler::build_hidden_column_name(*allocator,
+                                                    new_ai_column_def.get_column_name(),
+                                                    "__ai_spec", result_spec_name))) {
+    } else if (OB_FAIL(ObAiColumnDDLHandler::fill_hidden_column(*allocator, state_name,
+                                                     ObAiColumnDDLHandler::STATE_COLUMN_LENGTH,
+                                                     first_hidden_column_id,
+                                                     new_table_schema.get_table_id(),
+                                                     &state_column))) {
+    } else if (OB_FAIL(ObAiColumnDDLHandler::fill_hidden_column(*allocator, request_name,
+                                                     ObAiColumnDDLHandler::REQUEST_COLUMN_LENGTH,
+                                                     first_hidden_column_id + 1,
+                                                     new_table_schema.get_table_id(),
+                                                     &request_column))) {
+    } else if (OB_FAIL(ObAiColumnDDLHandler::fill_hidden_column(*allocator, result_spec_name,
+                                                     ObAiColumnDDLHandler::RESULT_SPEC_COLUMN_LENGTH,
+                                                     first_hidden_column_id + 2,
+                                                     new_table_schema.get_table_id(),
+                                                     &result_spec_column))) {
+    } else if (OB_FAIL(new_table_schema.add_column(state_column))) {
+    } else if (OB_FAIL(new_table_schema.add_column(request_column))) {
+    } else if (OB_FAIL(new_table_schema.add_column(result_spec_column))) {
+    } else {
+      new_ai_column_def.set_state_column_id(first_hidden_column_id);
+      new_ai_column_def.set_request_column_id(first_hidden_column_id + 1);
+      new_ai_column_def.set_result_spec_column_id(first_hidden_column_id + 2);
+      new_table_schema.set_max_used_column_id(first_hidden_column_id + 2);
+      // The hidden columns are part of the table, so they have to be persisted
+      // like the added AI column itself. Only the definition of the added column is
+      // written: the AI columns the table already has are in the metadata table, and
+      // writing them again would violate its (table_id, column_id) rowkey.
+      if (OB_FAIL(ddl_operator.insert_single_column(trans, new_table_schema, state_column))) {
+      } else if (OB_FAIL(ddl_operator.insert_single_column(trans, new_table_schema, request_column))) {
+      } else if (OB_FAIL(ddl_operator.insert_single_column(trans, new_table_schema, result_spec_column))) {
+      } else if (OB_FAIL(ObAiColumnDDLHandler::insert_ai_column(trans,
+                                                               new_table_schema.get_table_id(),
+                                                               new_ai_column_def))) {
+        RS_LOG(WARN, "failed to persist the ai column metadata", K(ret));
       }
     }
   }
@@ -10288,6 +10528,9 @@ int ObDDLService::alter_table_in_trans(obcall::ObAlterTableArg &alter_table_arg,
     int64_t refreshed_schema_version = 0;
     ObArenaAllocator allocator;
     ObArray<ObMockFKParentTableSchema> mock_fk_parent_table_schema_array;
+    // The AI column definitions the table had before this change. They are read
+    // from __all_ai_column, because the refreshed table schema does not carry them.
+    ObArray<share::ObAiColumnDef> orig_ai_column_defs;
     bool need_modify_notnull_validate = false;
     bool is_add_not_null_col = false;
     ObString empty_stmt;
@@ -10433,6 +10676,13 @@ int ObDDLService::alter_table_in_trans(obcall::ObAlterTableArg &alter_table_arg,
         if (OB_SUCC(ret) && alter_table_arg.is_alter_columns_) {
           if (OB_FAIL(check_can_alter_column(alter_table_schema,
                                              *orig_table_schema))) {
+          } else if (OB_FAIL(ObAiColumnDDLHandler::load_ai_column_defs(trans,
+                                                                      new_table_schema,
+                                                                      &orig_ai_column_defs))) {
+            // A column change has to see the AI columns the table already has, so
+            // that it can drop their hidden columns and so that the metadata of a
+            // dropped AI column is removed with it.
+            RS_LOG(WARN, "failed to load the ai column metadata of the table", K(ret));
           } else if (OB_FAIL(alter_table_column(*orig_table_schema,
                                                 alter_table_schema,
                                                 new_table_schema,
@@ -10441,6 +10691,11 @@ int ObDDLService::alter_table_in_trans(obcall::ObAlterTableArg &alter_table_arg,
                                                 ddl_operator,
                                                 trans,
                                                 &global_idx_schema_array))) {
+          } else if (OB_FAIL(ObAiColumnDDLHandler::sync_ai_columns(trans,
+                                                                   orig_ai_column_defs,
+                                                                   new_table_schema))) {
+            // The metadata of the AI columns always matches the schema of the table.
+            RS_LOG(WARN, "failed to synchronize the ai column metadata", K(ret));
           }
         }
         //table options
@@ -11437,6 +11692,12 @@ int ObDDLService::do_offline_ddl_in_trans(obcall::ObAlterTableArg &alter_table_a
             }
           } else if (OB_FAIL(check_can_alter_column(alter_table_schema,
                                                     *orig_table_schema))) {
+          } else if (OB_FAIL(ObAiColumnDDLHandler::load_ai_column_defs(trans,
+                                                                      new_table_schema))) {
+            // The AI column definitions are not carried by the refreshed table
+            // schema, so they are read from the metadata table. Without them a
+            // dropped AI column would leave its hidden columns behind.
+            RS_LOG(WARN, "failed to load the ai column metadata of the table", K(ret));
           } else if (OB_FAIL(gen_alter_column_new_table_schema_offline(
                               *orig_table_schema,
                               alter_table_schema,
@@ -11530,6 +11791,11 @@ int ObDDLService::do_offline_ddl_in_trans(obcall::ObAlterTableArg &alter_table_a
           }
         }
       }
+      // The AI column metadata of the table that is replaced is kept until the
+      // hidden table takes effect: the metadata of the AI columns that still
+      // exist is moved to the hidden table there, because only there the final
+      // table id and the final column ids are known. The metadata of the AI
+      // columns that the change dropped is removed with it.
 
       // submit async build index task
       if (OB_FAIL(ret)) {
@@ -15292,7 +15558,7 @@ int ObDDLService::swap_orig_and_hidden_table_state(obcall::ObAlterTableArg &alte
 {
   int ret = OB_SUCCESS;
   AlterTableSchema &alter_table_schema = alter_table_arg.alter_table_schema_;
-  
+
   if (OB_FAIL(check_inner_stat())) {
   } else {
     ObDDLSQLTransaction trans(schema_service_);
@@ -15418,6 +15684,22 @@ int ObDDLService::swap_orig_and_hidden_table_state(obcall::ObAlterTableArg &alte
                                                                nullptr/*hidden_tablet_ids_alone*/,
                                                                owner_id,
                                                                trans))) {
+          }
+        }
+        if (OB_SUCC(ret)) {
+          // The hidden table takes the place of the original table, so it gets
+          // the name and the table id of the original table. The metadata of the
+          // AI columns is written for the table that is visible from now on, so
+          // it has to be moved from the original table to the hidden one. Only
+          // here the final table id and the final column ids are known.
+          //
+          // The flag that tells an alter of the columns apart from an alter of
+          // the indexes is not carried by the RPC, so the AI columns are
+          // detected by their metadata instead.
+          if (OB_FAIL(move_ai_columns_to_hidden_table_(trans,
+                                                       *orig_table_schema,
+                                                       *hidden_table_schema))) {
+            RS_LOG(WARN, "failed to move the ai column metadata", K(ret));
           }
         }
       }
@@ -22509,6 +22791,9 @@ int ObDDLService::drop_column_online(
                     origin_table_schema.get_table_name_str().ptr());
   } else if (OB_FAIL(ddl_operator.update_prev_id_for_delete_column(
                 origin_table_schema, new_table_schema, *orig_column_schema, trans))) {
+  } else if (OB_FAIL(drop_ai_column_of_dropped_column_(new_table_schema, *orig_column_schema))) {
+    // A dropped AI column takes its hidden columns with it.
+    RS_LOG(WARN, "failed to remove the hidden columns of the dropped ai column", K(ret));
   } else {
     char new_col_name[OB_MAX_COLUMN_NAME_BUF_LENGTH] = {0};
     ObObj default_value;

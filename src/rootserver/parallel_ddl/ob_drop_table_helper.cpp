@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX RS
 #include "rootserver/parallel_ddl/ob_drop_table_helper.h"
+#include "rootserver/ob_ai_column_ddl_handler.h"
 
 #include "rootserver/ob_snapshot_info_manager.h"
 #include "rootserver/ob_tablet_drop.h"
@@ -1153,6 +1154,12 @@ int ObDropTableHelper::drop_table_(const ObTableSchema &table_schema, const ObSt
                        &drop_table_ids_))) {
     } else if (OB_FAIL(ddl_operator.sync_version_for_cascade_table(table_schema.get_depend_table_ids(), get_trans_()))) {
     } else if (OB_FAIL(sync_version_for_cascade_mock_fk_parent_table_(table_schema.get_depend_mock_fk_parent_table_ids()))) {
+    } else if (!is_inner_table(table_schema.get_table_id())
+               && OB_FAIL(ObAiColumnDDLHandler::delete_ai_columns(get_trans_(),
+                                                                table_schema.get_table_id()))) {
+      // The metadata of the AI columns of the table is removed together with the
+      // table, so that no stale definition is left behind.
+      RS_LOG(WARN, "failed to remove the ai column metadata", K(ret));
     }
 
     if (OB_SUCC(ret)) {

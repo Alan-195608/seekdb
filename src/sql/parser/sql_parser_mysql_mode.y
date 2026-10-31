@@ -338,6 +338,7 @@ END_P SET_VAR DELIMITER
 
         RECOVER REDUNDANT REFRESH RELAY RELAYLOG RELAY_LOG_FILE RELAY_LOG_POS RELAY_THREAD RELOAD REMOVE
         REPEATABLE RESET RESPECT RESTART RESTORE RESUME RETURNED_SQLSTATE RETURNS RETURNING REVERSE
+        RETRY
         REWRITE ROLLBACK ROLLUP ROUTINE ROW ROWID ROW_COUNT ROW_FORMAT ROWS RTREE
         RUN RECYCLEBIN REPLICATION ROTATE ROW_NUMBER RUDUNDANT RECURSIVE RANDOM REDO_TRANSPORT_OPTIONS
         RANK READ_ONLY RECOVERY REJECT ROLE
@@ -425,6 +426,9 @@ END_P SET_VAR DELIMITER
 %type <node> opt_equal_mark opt_default_mark read_only_or_write not not2
 %type <node> int_or_decimal
 %type <node> opt_column_attribute_list column_attribute column_attribute_list opt_column_default_value opt_column_default_value_list
+%type <node> ai_column_def ai_column_option_list ai_column_option ai_column_retry
+%type <node> opt_ai_column_option_list
+%type <node> opt_ai_column_where_clause
 %type <node> show_stmt from_or_in columns_or_fields database_or_schema index_or_indexes_or_keys opt_from_or_in_database_clause opt_show_condition opt_desc_column_option opt_status opt_storage opt_show_engine check_table_options check_table_option
 %type <node> prepare_stmt stmt_name preparable_stmt
 %type <node> variable_set_stmt var_and_val_list var_and_val to_or_eq set_expr_or_default sys_var_and_val
@@ -4845,6 +4849,16 @@ column_definition_ref data_type opt_column_attribute_list opt_column_reference o
   set_data_type_collation($2, attributes, false, true);
   malloc_non_terminal_node($$, result->malloc_pool_, T_COLUMN_DEFINITION, 4, $1, $2, attributes, $5);
 }
+| column_definition_ref data_type ai_column_def opt_column_attribute_list opt_column_reference opt_position_column
+{
+  (void)($5);
+  ParseNode *attributes = NULL;
+  merge_nodes(attributes, result, T_COLUMN_ATTRIBUTES, $4);
+  set_data_type_collation($2, attributes, false, true);
+  /* the AI column definition travels in its own child slot of the column
+     definition node so that the attribute chain keeps its shape */
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COLUMN_DEFINITION, 5, $1, $2, attributes, $6, $3);
+}
 | column_definition_ref data_type opt_collation opt_generated_keyname AS '(' expr ')' opt_storage_type opt_generated_column_attribute_list opt_column_reference opt_position_column
 {
   (void)($11);
@@ -6131,6 +6145,45 @@ column_attribute_list
 }
 | /*EMPTY*/
 { $$ = NULL; }
+;
+
+/* AI COLUMN (<expr>) WITH (sync_mode='async', max_retries=<n>) */
+ai_column_def:
+AI COLUMN '(' expr ')' opt_ai_column_option_list
+{
+  ParseNode *ai_column_def = NULL;
+  /* keep the text of the expression so that the definition can be persisted */
+  dup_expr_string($4, result, @4.first_column, @4.last_column);
+  malloc_non_terminal_node(ai_column_def, result->malloc_pool_, T_AI_COLUMN_DEF, 2, $4, $6);
+  $$ = ai_column_def;
+}
+;
+
+opt_ai_column_option_list:
+WITH '(' ai_column_option_list ')'
+{
+  $$ = $3;
+}
+| /*EMPTY*/
+{ $$ = NULL; }
+;
+
+ai_column_option_list:
+ai_column_option_list ',' ai_column_option
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+}
+| ai_column_option
+{
+  $$ = $1;
+}
+;
+
+ai_column_option:
+column_name COMP_EQ expr
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN_OPTION_LIST, 2, $1, $3);
+}
 ;
 
 column_attribute_list:
@@ -14750,6 +14803,32 @@ DROP CONSTRAINT constraint_name
   (void)($3);
   $$ = NULL;
 }
+| ai_column_retry
+{
+  $$ = $1;
+}
+;
+
+/* ALTER TABLE t RETRY AI COLUMN c [WHERE <expr>] */
+ai_column_retry:
+RETRY AI COLUMN column_name opt_ai_column_where_clause
+{
+  (void)($2);
+  (void)($3);
+  ParseNode *ai_column_retry = NULL;
+  malloc_non_terminal_node(ai_column_retry, result->malloc_pool_, T_AI_COLUMN_RETRY, 2, $4, $5);
+  $$ = ai_column_retry;
+}
+;
+
+opt_ai_column_where_clause:
+/* EMPTY */
+{ $$ = NULL; }
+| WHERE expr
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_WHERE_CLAUSE, 1, $2);
+  dup_string($$, result, @2.first_column, @2.last_column);
+}
 ;
 
 algorithm_opt:
@@ -18044,6 +18123,7 @@ ACCOUNT
 |       RESUME
 |       RETURNED_SQLSTATE
 |       RETURNING
+|       RETRY
 |       RETURNS
 |       REVERSE
 |       REWRITE

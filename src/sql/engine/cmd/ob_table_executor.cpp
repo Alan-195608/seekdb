@@ -20,6 +20,7 @@
 #include "lib/stat/ob_diagnostic_info_guard.h"
 #include "share/ob_server_struct.h"
 #include "sql/engine/cmd/ob_table_executor.h"
+#include "sql/engine/dml/ai_column_dml.h"
 #include "query/command/ob_root_command_service.h"
 #include "query/command/ob_root_service_serialization.h"
 #include "query/runtime/ob_query_runtime_environment.h"
@@ -754,6 +755,17 @@ int ObAlterTableExecutor::alter_table_exchange_partition_rpc(obcall::ObExchangeP
 int ObAlterTableExecutor::execute(ObExecContext &ctx, ObAlterTableStmt &stmt)
 {
   int ret = OB_SUCCESS;
+  if (stmt.is_ai_column_retry()) {
+    common::sqlclient::ObISQLConnectionGuard conn_guard;
+    AiColumnRetryGuard retry_guard(stmt.get_ai_retry_column_id(), stmt.get_ai_retry_predicate());
+    int64_t affected_rows = 0;
+    if (OB_ISNULL(ctx.get_my_session())) { ret = OB_ERR_UNEXPECTED; }
+    else if (OB_FAIL(query::ObInnerSQLConnectionAccess::create_connection_with_external_session(
+                        ctx.get_my_session(), conn_guard))) {
+    } else if (OB_ISNULL(conn_guard.get_ptr())) { ret = OB_ERR_UNEXPECTED; }
+    else { ret = conn_guard.get_ptr()->execute_write(stmt.get_ai_retry_sql(), affected_rows); }
+    return ret;
+  }
   ObSqlExecutorCtx *task_exec_ctx = NULL;
   obcall::ObAlterTableArg &alter_table_arg = stmt.get_alter_table_arg();
   obcall::ObExchangePartitionArg &exchange_partition_arg = stmt.get_exchange_partition_arg();

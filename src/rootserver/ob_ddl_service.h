@@ -222,6 +222,32 @@ public:
       common::ObIArray<share::schema::ObTableSchema> *global_idx_schema_array = NULL);
   int redistribute_column_ids(
       ObTableSchema &new_table_schema);
+  /**
+   * Remove the hidden columns and the definition of a dropped AI column.
+   *
+   * A dropped AI column takes its hidden columns with it, because they only
+   * carry the state of the AI column.
+   */
+  int drop_ai_column_of_dropped_column_(
+      share::schema::ObTableSchema &new_table_schema,
+      const share::schema::ObColumnSchemaV2 &dropped_column);
+  /**
+   * Move the metadata of the AI columns to the hidden table of a redefinition.
+   *
+   * The hidden table takes the place of the original table, so it becomes the
+   * table the metadata belongs to. Only here the final table id and the final
+   * column ids are known.
+   */
+  int move_ai_columns_to_hidden_table_(
+      common::ObMySQLTransaction &trans,
+      const share::schema::ObTableSchema &orig_table_schema,
+      const share::schema::ObTableSchema &hidden_table_schema);
+  /**
+   * Read the ids of the three hidden columns of an AI column from a schema.
+   */
+  int set_hidden_column_ids_(
+      const share::schema::ObTableSchema &table_schema,
+      share::ObAiColumnDef &ai_column_def);
   int add_new_column_to_table_schema(
       const share::schema::ObTableSchema &origin_table_schema,
       const share::schema::AlterTableSchema &alter_table_schema,
@@ -235,6 +261,19 @@ public:
       uint64_t &curr_udt_set_id,
       ObDDLOperator *ddl_operator,
       common::ObMySQLTransaction *trans);
+  /**
+   * Create and persist the hidden columns of an added AI column.
+   *
+   * The resolver records the AI column definition of an added column in the alter
+   * table schema, because the added column itself is not part of the table schema
+   * yet.
+   */
+  int add_ai_column_hidden_columns_(
+      share::schema::ObTableSchema &new_table_schema,
+      const share::schema::AlterTableSchema &alter_table_schema,
+      const share::schema::AlterColumnSchema &alter_column_schema,
+      ObDDLOperator &ddl_operator,
+      common::ObMySQLTransaction &trans);
   int gen_alter_column_new_table_schema_offline(
       const share::schema::ObTableSchema &origin_table_schema,
       share::schema::AlterTableSchema &alter_table_schema,

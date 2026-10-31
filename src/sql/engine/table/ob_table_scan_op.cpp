@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_ENG
+#include "sql/engine/dml/ai_column_dml.h"
 #include "data_plane/transaction/ob_transaction_version.h"
 
 
@@ -1435,6 +1436,8 @@ int ObTableScanOp::inner_open()
   init_scan_monitor_info();
   if (OB_ISNULL(my_session = GET_MY_SESSION(ctx_))) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(check_ai_column_strict_read(ctx_, MY_SPEC.ref_table_id_,
+                   MY_CTDEF.get_full_acccess_cids()))) {
   } else if (OB_FAIL(ObDASUtils::check_nested_sql_mutating(MY_SPEC.ref_table_id_, ctx_, true))) {
   } else if (OB_FAIL(init_table_scan_rtdef())) {
   } else if (MY_SPEC.is_fts_ddl_ && OB_FAIL(fts_index_.init(MY_SPEC.is_fts_index_aux_, MY_SPEC.parser_name_,
