@@ -157,12 +157,12 @@ class Parser {
         need("[");
         if (!take("]")) {
             do {
-                if (result.size() == dimension) invalid("vector dimension mismatch");
+                if (result.size() == dimension) throw SqlError("DIMENSION_MISMATCH", "vector dimension mismatch");
                 result.push_back(scalar());
             } while (take(","));
             need("]");
         }
-        if (result.size() != dimension) invalid("vector dimension mismatch");
+        if (result.size() != dimension) throw SqlError("DIMENSION_MISMATCH", "vector dimension mismatch");
         return result;
     }
 

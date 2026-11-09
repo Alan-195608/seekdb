@@ -51,6 +51,14 @@
       "source": "agent-run tool",
       "method": "在 Apple Silicon 的 Colima 环境中用 x86_64 模拟运行 Docker 镜像。构建从本地镜像源读取同一份 Alpine 签名索引与版本锁定包。容器运行禁用网络，内存与内存加交换空间均限制为 192 MiB。插入 52,000 行，每行含 4,096 字符，再重新启动，核对按主键读取的记录和全表精确 TopK。",
       "output": "linux/amd64 965910 bytes\nPublic SQL: 5 cases, 32 statements passed\nStatement failure after >2 MiB of staged writes, SIGKILL, and three recoveries passed\n270 exact/indexed TopK comparisons against an independent oracle passed\nlinux/amd64: 52000 rows, 214504233 WAL bytes, reopened under a 192 MiB no-swap cap"
+    },
+    {
+      "id": "E4",
+      "source": "agent-run tool",
+      "method": "用官方公开 v4 用例复测已提交版本，发现两项错误语义名不匹配。修正错误名，扩展本地测试驱动以处理正常重启、切换 ann 和错误断言，并在 ASan/UBSan 构建上复测新旧两套样例。",
+      "initial_output": "20 95 2\nsql_unsupported: UNSUPPORTED vs unsupported_sql\ntransaction_autocommit_atomic: INVALID_VALUE vs dimension_mismatch",
+      "output": "Public SQL: 20 cases, 95 statements passed\nStatement failure after >2 MiB of staged writes, SIGKILL, and three recoveries passed\n270 exact/indexed TopK comparisons against an independent oracle passed\nPublic SQL: 5 cases, 32 statements passed",
+      "official_cases_commit": "9f6df2ba5acf871376e22b64a3d0724e4b575044"
     }
   ],
   "limitations": "以上实验由 Agent 执行。现有会话未记录学生亲自执行实验、独立解释结果或复盘。公开样例与本地适配器无法验证平台的完整通信协议及正式准入。"

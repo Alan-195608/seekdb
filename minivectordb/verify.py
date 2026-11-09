@@ -53,6 +53,9 @@ class Session:
 
 
 def assert_result(actual, expected):
+    if "error" in expected:
+        assert actual.get("error", "").lower() == expected["error"], (actual, expected)
+        return
     assert "error" not in actual, actual
     for key in ("affected_rows", "columns"):
         if key in expected:
@@ -81,17 +84,32 @@ def public_cases(binary, root):
     count = 0
     for case in manifest["cases"]:
         name = case["id"]
-        path = root / "cases" / name
-        statements = [sql for sql in path.with_suffix(".test").read_text().splitlines() if sql.strip()]
-        expectations = json.loads(path.with_suffix(".result").read_text())
-        assert len(statements) == len(expectations) == case["statements"]
-        with tempfile.TemporaryDirectory() as directory, Session(binary, directory) as db:
-            for sql, expected in zip(statements, expectations):
-                try:
-                    assert_result(db.sql(sql), expected)
-                except AssertionError as error:
-                    raise AssertionError(f"{name}: {sql}: {error}") from error
-        count += len(statements)
+        test_path = root / case.get("test", f"cases/{name}.test")
+        result_path = root / case.get("result", f"cases/{name}.result")
+        statements = [line.strip() for line in test_path.read_text().splitlines() if line.strip()]
+        expected = iter(json.loads(result_path.read_text()))
+        executed = 0
+        with tempfile.TemporaryDirectory() as directory:
+            db = Session(binary, directory)
+            try:
+                for sql in statements:
+                    if sql == "--restart":
+                        db.__exit__()
+                        db = Session(binary, directory)
+                        continue
+                    if sql.startswith("--mode "):
+                        assert_result(db.sql(sql[2:]), {})
+                        continue
+                    try:
+                        assert_result(db.sql(sql), next(expected))
+                    except AssertionError as error:
+                        raise AssertionError(f"{name}: {sql}: {error}") from error
+                    executed += 1
+                assert next(expected, None) is None
+                assert executed == case["statements"]
+            finally:
+                db.__exit__()
+        count += executed
     print(f"Public SQL: {len(manifest['cases'])} cases, {count} statements passed")
 
 

@@ -502,7 +502,7 @@ public:
             else if (p.take("insert")) result.affected = insert(p);
             else if (p.take("update")) result.affected = change(p, true);
             else if (p.take("delete")) result.affected = change(p, false);
-            else throw SqlError("UNSUPPORTED", "unsupported statement");
+            else throw SqlError("UNSUPPORTED_SQL", "unsupported statement");
         } catch (const SqlError&) {
             store_.restore(point);
             throw;
