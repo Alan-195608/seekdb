@@ -1,0 +1,57 @@
+{
+  "scope": "2026-11-09 Codex 开发会话的可公开摘录。学生原话、Agent 设计决策与实际工具输出分开标注。省略本机路径、截图及凭据。",
+  "conversations": [
+    {
+      "id": "U1",
+      "role": "student",
+      "content": "实现 MiniVectorDB：一套支持基础 SQL、向量检索、持久化存储、事务与崩溃恢复的轻量数据库。本题加赛满分 80 分，初赛已得分不受影响。"
+    },
+    {
+      "id": "U2",
+      "role": "student",
+      "content": "提交材料：在报名登记的 seekdb 仓库 `2026-competition-round2` 分支提交源码、Dockerfile 和 Agent Prompt 学习材料。源码、Dockerfile 和 Agent Prompt 材料须来自同一次提交。整题只需提测一次；如填写 Commit SHA，请使用完整值。"
+    },
+    {
+      "id": "A1",
+      "role": "agent",
+      "content": "如果比赛平台已提供 MiniVectorDB 公开题包或配套测试驱动，请发压缩包、下载链接或本地路径。我会先实现数据库核心，拿到题包后即可对齐评测协议。"
+    },
+    {
+      "id": "U3",
+      "role": "student",
+      "content": "没有，影响做题吗"
+    },
+    {
+      "id": "A2",
+      "role": "agent",
+      "content": "可以继续做。题包缺失会影响正式兼容性验证，因为就绪标识、结果格式、错误码和模式切换命令都由评测驱动定义。我会把这些规则集中在独立的协议层，先用本地驱动验证 SQL、事务、恢复和检索。"
+    },
+    {
+      "id": "A3",
+      "role": "agent",
+      "content": "找到了 OceanBase 官方 GitHub 分支，里面有 5 组公开样例、共 32 条 SQL。样例明确了列名、受影响行数、排序和浮点误差等断言，也说明这批文件未包含完整通信驱动。我会以官方分支为基线，用公开断言验证当前实现。"
+    }
+  ],
+  "experiments": [
+    {
+      "id": "E1",
+      "source": "agent-run tool",
+      "command": "python3 minivectordb/verify.py /tmp/ob-round2-mini",
+      "method": "逐条核对官方公开用例的列名、影响行数和结果。用跨 2 MiB 的多行 INSERT 在末尾触发主键冲突，检查事务内之前成功的 UPDATE 保留，提交后再在含未提交变更时 SIGKILL。用独立暴力枚举构造距离、主键排序和过滤真值，分别核对 exact 和 ann。",
+      "output": "Public SQL: 5 cases, 32 statements passed\nStatement failure after >2 MiB of staged writes, SIGKILL, and three recoveries passed\n270 exact/indexed TopK comparisons against an independent oracle passed"
+    },
+    {
+      "id": "E2",
+      "source": "agent-run tool",
+      "command": "clang++ -std=c++20 -O1 -g -fsanitize=address,undefined minivectordb/main.cpp -o /tmp/ob-round2-sanitized && python3 minivectordb/verify.py /tmp/ob-round2-sanitized",
+      "output": "Public SQL: 5 cases, 32 statements passed\nStatement failure after >2 MiB of staged writes, SIGKILL, and three recoveries passed\n270 exact/indexed TopK comparisons against an independent oracle passed"
+    },
+    {
+      "id": "E3",
+      "source": "agent-run tool",
+      "method": "在 Apple Silicon 的 Colima 环境中用 x86_64 模拟运行 Docker 镜像。构建从本地镜像源读取同一份 Alpine 签名索引与版本锁定包。容器运行禁用网络，内存与内存加交换空间均限制为 192 MiB。插入 52,000 行，每行含 4,096 字符，再重新启动，核对按主键读取的记录和全表精确 TopK。",
+      "output": "linux/amd64 965910 bytes\nPublic SQL: 5 cases, 32 statements passed\nStatement failure after >2 MiB of staged writes, SIGKILL, and three recoveries passed\n270 exact/indexed TopK comparisons against an independent oracle passed\nlinux/amd64: 52000 rows, 214504233 WAL bytes, reopened under a 192 MiB no-swap cap"
+    }
+  ],
+  "limitations": "以上实验由 Agent 执行。现有会话未记录学生亲自执行实验、独立解释结果或复盘。公开样例与本地适配器无法验证平台的完整通信协议及正式准入。"
+}

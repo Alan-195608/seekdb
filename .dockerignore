@@ -1,0 +1,4 @@
+**
+!minivectordb/
+!minivectordb/*.hpp
+!minivectordb/main.cpp
