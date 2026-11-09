@@ -39,7 +39,8 @@ private:
   int metadata(const std::string &table, const std::string &column, Row &row);
   static std::string quote(const std::string &value);
   static std::string literal(const std::string &value);
-  common::ObTimer timer_;
+  static constexpr int WORKER_COUNT = 4;
+  common::ObTimer timers_[WORKER_COUNT];
   common::ObMySQLProxy *proxy_;
   int64_t owner_;
 };

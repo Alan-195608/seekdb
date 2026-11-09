@@ -56,14 +56,34 @@ std::string AiColumnWorker::literal(const std::string &s) {
   for(unsigned char c:s) { q+=h[c>>4]; q+=h[c&15]; } return q+"' USING utf8mb4)";
 }
 int AiColumnWorker::start(ObMySQLProxy &p) {
-  int ret=OB_SUCCESS; proxy_=&p; owner_=ObTimeUtility::current_time();
-  if (OB_FAIL(timer_.init("AiColumnWorker", ObMemAttr("AiColumnWorker")))) {}
-  else if (OB_FAIL(timer_.schedule(*this, 100000, true))) { timer_.destroy(); }
+  int ret=OB_SUCCESS;
+  proxy_=&p;
+  owner_=ObTimeUtility::current_time();
+  for (auto &timer : timers_) {
+    if (OB_FAIL(timer.init("AiColumnWorker", ObMemAttr("AiColumnWorker"))) ||
+        OB_FAIL(timer.schedule(*this, 100000, true))) {
+      break;
+    }
+  }
+  if (OB_FAIL(ret)) {
+    destroy();
+  }
   return ret;
 }
-void AiColumnWorker::stop() { timer_.stop(); }
-void AiColumnWorker::wait() { timer_.wait(); }
-void AiColumnWorker::destroy() { timer_.destroy(); proxy_=nullptr; }
+void AiColumnWorker::stop() {
+  for (auto &timer : timers_) {
+    if (timer.inited()) timer.stop();
+  }
+}
+void AiColumnWorker::wait() {
+  for (auto &timer : timers_) {
+    if (timer.inited()) timer.wait();
+  }
+}
+void AiColumnWorker::destroy() {
+  for (auto &timer : timers_) timer.destroy();
+  proxy_=nullptr;
+}
 int AiColumnWorker::read(ObISQLClient &c, const std::string &sql,
                        const std::vector<std::string> &names, Rows &rows) {
   int ret=OB_SUCCESS; ObMySQLProxy::MySQLResult result;
@@ -112,22 +132,34 @@ void AiColumnWorker::runTimerTask() {
   if(ret!=OB_SUCCESS) LOG_WARN("AI column worker iteration failed", K(ret));
 }
 int AiColumnWorker::process_one() {
-  int ret=OB_SUCCESS; ObMySQLTransaction tr; Rows tasks; int64_t n=0;
+  Rows tasks;
+  int64_t n=0;
   const int64_t now=ObTimeUtility::current_time();
-  if(OB_FAIL(tr.start(proxy_))) return ret;
+  const std::string eligible="((state IN(0,3) AND eligible_ts<="+number(now)+
+    ") OR (state=1 AND lease_ts<"+number(now)+"))";
   std::string sql=std::string("SELECT CAST(table_id AS CHAR) t,CAST(request_id AS CHAR) r,")+
     "CAST(column_id AS CHAR) c,CAST(definition_version AS CHAR) v,"
     "CAST(claim_generation AS CHAR) g,CAST(retry_count AS CHAR) retry,rowkey_predicate pk FROM "+TASK+
-    " WHERE (state IN(0,3) AND eligible_ts<="+number(now)+") OR (state=1 AND lease_ts<"+number(now)+")"
-    " ORDER BY eligible_ts LIMIT 1 FOR UPDATE";
-  ret=read(tr,sql,{"t","r","c","v","g","retry","pk"},tasks);
-  if(ret!=OB_SUCCESS || tasks.empty()) { (void)tr.end(false); return ret; }
-  Row task=tasks[0]; const std::string gen=number(integer(task["g"])+1);
-  const std::string key="table_id="+task["t"]+" AND request_id="+task["r"]+" AND column_id="+task["c"];
-  ret=write(tr,std::string("UPDATE ")+TASK+" SET state=1,owner_id="+number(owner_)+
-    ",claim_generation="+gen+",lease_ts="+number(now+120000000)+" WHERE "+key,n);
-  int end=tr.end(ret==OB_SUCCESS); if(ret==OB_SUCCESS) ret=end;
-  if(ret!=OB_SUCCESS) return ret;
+    " WHERE "+eligible+" ORDER BY eligible_ts,table_id,request_id,column_id LIMIT "+number(WORKER_COUNT);
+  int ret=read(*proxy_,sql,{"t","r","c","v","g","retry","pk"},tasks);
+  if(ret!=OB_SUCCESS || tasks.empty()) return ret;
+  Row task;
+  std::string key, gen;
+  for (auto &candidate : tasks) {
+    key="table_id="+candidate["t"]+" AND request_id="+candidate["r"]+" AND column_id="+candidate["c"];
+    gen=number(integer(candidate["g"])+1);
+    // Only the worker that changes this eligible generation may call the model.
+    // If another worker wins, try a different candidate without holding a SQL lock.
+    ret=write(*proxy_,std::string("UPDATE ")+TASK+" SET state=1,owner_id="+number(owner_)+
+      ",claim_generation="+gen+",lease_ts="+number(ObTimeUtility::current_time()+120000000)+
+      " WHERE "+key+" AND claim_generation="+candidate["g"]+" AND "+eligible,n);
+    if(ret!=OB_SUCCESS) return ret;
+    if(n==1) {
+      task=std::move(candidate);
+      break;
+    }
+  }
+  if(task.empty()) return OB_SUCCESS;
   Row meta; Rows result;
   ret=metadata(task["t"],task["c"],meta);
   if(ret==OB_SUCCESS && meta["ver"]!=task["v"]) ret=OB_ENTRY_NOT_EXIST;
@@ -199,7 +231,7 @@ int AiColumnWorker::process_one() {
       ",lease_ts=0,last_error="+literal("AI evaluation error "+number(ret))+" WHERE "+fence;
     ret=write(*proxy_,sql,n);
   }
-  if(ret==OB_SUCCESS) ret=publish(task["t"],task["r"]);
+  if(ret==OB_SUCCESS && n==1) ret=publish(task["t"],task["r"]);
   return ret;
 }
 int AiColumnWorker::publish(const std::string &table,const std::string &request) {
