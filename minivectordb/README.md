@@ -13,7 +13,7 @@ docker run --rm --platform linux/amd64 --network none -i \
   -v minivectordb-data:/data minivectordb:round2
 ```
 
-原生构建需要支持 C++20 和浮点 `std::from_chars` 的编译器，例如 GCC 14。
+原生构建需要支持 C++20 和浮点 `std::from_chars` 的编译器（例如 GCC 14），以及 CMake、pkg-config 和 Jansson 2.14 或更新版本的开发文件。
 
 ```sh
 cmake -S minivectordb -B /tmp/minivectordb-build -DCMAKE_BUILD_TYPE=Release
@@ -24,7 +24,7 @@ python3 minivectordb/verify.py /tmp/minivectordb-build/minivectordb
 
 ## SQL 示例
 
-空目录启动后逐行发送：
+从空目录启动后，等待就绪报文，再依次将以下 SQL 包装为 `execute` 请求。
 
 ```sql
 CREATE TABLE docs (id BIGINT PRIMARY KEY, topic VARCHAR(12), embedding VECTOR(2));
@@ -38,21 +38,28 @@ COMMIT;
 BEGIN;
 DELETE FROM docs WHERE id = 1;
 ROLLBACK;
-QUIT;
 ```
 
-复用原数据目录重启后，`SELECT * FROM docs WHERE id = 1;` 返回向量 `[1,0]` 的记录。
+发送 `shutdown` 后复用原数据目录重启，`SELECT * FROM docs WHERE id = 1;` 返回向量 `[1,0]` 的记录。
 
 支持一个 BIGINT 主键、BIGINT、VARCHAR、VECTOR、整行或列顺序重排插入、多行插入、条件 UPDATE 和 DELETE、普通列投影、WHERE 比较与 AND、ORDER BY 和 LIMIT。VARCHAR 按 UTF-8 Unicode 码点计长，向量写入 float32，距离用双精度计算。对排序值相同的记录按主键升序。
 
-## 本地通信协议
+## 评测通信协议
 
-公开用例定义了 SQL 和结果语义，完整官方驱动及通信协议仍需核对。本地适配层位于 `main.cpp`，每行接收一条完整 SQL，末尾分号可省略。恢复完成后输出 `READY`。命令响应为以下格式，其中 `\t` 表示制表符：
+容器默认按官方 JSON Lines 协议启动，完成恢复后输出 `{"type":"ready"}`。每次输入和输出各占一行 UTF-8 JSON，输出后立即刷新。默认数据目录为 `/data`。诊断信息写入 stderr。
 
-- `OK\t<受影响行数>`
-- `RESULT\t<行数>\t<列数>`，随后为一行列名和指定数量的数据行。列间用制表符分隔，字符串转义反斜杠、制表符、换行、回车和 NUL。
-- `ERR\t<错误码>\t<错误信息>`。SQL 错误保留当前会话，存储 I/O 异常写入 stderr 并终止。
-- `MODE exact` 和 `MODE ann` 切换向量查询模式，默认为 exact。`QUIT` 或输入结束会回滚未提交事务。
+```jsonl
+{"id":1,"op":"execute","sql":"SELECT id FROM docs ORDER BY id;","search_mode":"exact"}
+{"id":2,"op":"shutdown"}
+```
+
+SQL 响应保留请求的 `id` 和类型。查询成功返回 `ok`、`columns`、`rows`，其中 BIGINT 和向量分别使用 JSON 整数和数组。修改成功返回 `affected_rows`。SQL 错误返回 `ok:false` 和 `error.code`、`error.message`，并保留当前会话。`search_mode` 可逐次指定为 `exact` 或 `ann`，省略时使用 `exact`。`shutdown` 回滚未提交事务并返回成功响应，再退出进程。
+
+协议及检查工具见 [OceanBase 官方加赛题包](https://github.com/oceanbase/seekdb/tree/f4d4e26653af823a7601668802f80e374ad6643c)。在官方题包根目录运行：
+
+```sh
+python3 protocol_check/run.py --image minivectordb:round2 --output protocol-results/public
+```
 
 ## 存储与检索
 
@@ -64,4 +71,4 @@ QUIT;
 
 `verify.py` 默认运行仓库中的首批 5 组官方公开 SQL 断言。通过 `--cases` 指定官方 v4 的 `mysqltest` 目录可运行新版 20 组样例，包括重启、模式切换与错误语义。测试脚本还使用独立暴力枚举检查事务前、事务中和回滚后的 TopK。恢复测试构造跨缓冲区的失败语句，用 SIGKILL 终止含未提交修改的进程，再三次重启检查状态。正式结果以赛事平台评测为准。
 
-本地 Linux x86_64 模拟容器完成以上验证。另一轮在禁用交换空间、192 MiB 内存限制下写入 52,000 行，生成 214,504,233 字节日志，随后以相同限制重启并核对主键查询和精确 TopK。构建使用 Alpine 的签名软件包及版本锁。
+Linux amd64 镜像通过官方工具的 20 组公开用例（95 条 SQL），并通过本地故障及向量回归。另一轮在禁用交换空间、192 MiB 内存限制下写入 52,000 行，生成 214,504,233 字节日志，随后以相同限制重启并核对主键查询和精确 TopK。构建使用 Alpine 的签名软件包及版本锁。

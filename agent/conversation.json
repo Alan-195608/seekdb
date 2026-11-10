@@ -1,14 +1,14 @@
 {
-  "scope": "2026-11-09 Codex 开发会话的可公开摘录。学生原话、Agent 设计决策与实际工具输出分开标注。省略本机路径、截图及凭据。",
+  "scope": "2026-11-09 至 2026-11-10 Codex 开发及协议修复会话的可公开摘录。赛事说明、学生原话、Agent 回复与实际工具输出分开标注。省略本机路径、截图及凭据。",
   "conversations": [
     {
       "id": "U1",
-      "role": "student",
+      "role": "competition_context",
       "content": "实现 MiniVectorDB：一套支持基础 SQL、向量检索、持久化存储、事务与崩溃恢复的轻量数据库。本题加赛满分 80 分，初赛已得分不受影响。"
     },
     {
       "id": "U2",
-      "role": "student",
+      "role": "competition_context",
       "content": "提交材料：在报名登记的 seekdb 仓库 `2026-competition-round2` 分支提交源码、Dockerfile 和 Agent Prompt 学习材料。源码、Dockerfile 和 Agent Prompt 材料须来自同一次提交。整题只需提测一次；如填写 Commit SHA，请使用完整值。"
     },
     {
@@ -30,6 +30,26 @@
       "id": "A3",
       "role": "agent",
       "content": "找到了 OceanBase 官方 GitHub 分支，里面有 5 组公开样例、共 32 条 SQL。样例明确了列名、受影响行数、排序和浮点误差等断言，也说明这批文件未包含完整通信驱动。我会以官方分支为基线，用公开断言验证当前实现。"
+    },
+    {
+      "id": "U4",
+      "role": "student",
+      "content": "仔细检查提测要求，不要出现和要求不符而提测失败的情况"
+    },
+    {
+      "id": "U5",
+      "role": "student",
+      "content": "现在就要开始"
+    },
+    {
+      "id": "U6",
+      "role": "student",
+      "content": "保留定时任务，同时给我最后的branch和commit id，尽最大可能一直推进，不要停"
+    },
+    {
+      "id": "U7",
+      "role": "student",
+      "content": "你之前做过一次，做错了，再做一遍"
     }
   ],
   "experiments": [
@@ -59,7 +79,49 @@
       "initial_output": "20 95 2\nsql_unsupported: UNSUPPORTED vs unsupported_sql\ntransaction_autocommit_atomic: INVALID_VALUE vs dimension_mismatch",
       "output": "Public SQL: 20 cases, 95 statements passed\nStatement failure after >2 MiB of staged writes, SIGKILL, and three recoveries passed\n270 exact/indexed TopK comparisons against an independent oracle passed\nPublic SQL: 5 cases, 32 statements passed",
       "official_cases_commit": "9f6df2ba5acf871376e22b64a3d0724e4b575044"
+    },
+    {
+      "id": "E5",
+      "source": "agent-run tool",
+      "official_cases_commit": "9f6df2ba5acf871376e22b64a3d0724e4b575044",
+      "method": "核对公开题包全部 42 个文件与官方 Git blob 哈希。用同一份当前源码重新构建 Linux amd64 镜像，构建阶段使用 Alpine 签名包镜像缓存，运行阶段禁用网络。独立于容器测试，另用 ASan/UBSan 构建复测公开题包。",
+      "output": "42 files match GitHub blob hashes\nPublic SQL: 20 cases, 95 statements passed\nStatement failure after >2 MiB of staged writes, SIGKILL, and three recoveries passed\n270 exact/indexed TopK comparisons against an independent oracle passed\nlinux/amd64: 52000 rows, 214504233 WAL bytes, reopened under a 192 MiB no-swap cap"
+    },
+    {
+      "id": "E6",
+      "source": "agent-run tool",
+      "method": "本地模拟 10,000 条 128 维记录和 1,000 条 TopK 查询，写入每批 100 条并等待自动提交，K=10，半数查询附带普通列等值过滤。比较同一查询序列在 exact 与 ann 下的结果。此轮使用本地生成数据及 amd64 模拟容器，时间仅供本地对比。",
+      "output": "100 durable batches / 10000 rows: 0.369s\nexact: 1000 TopK queries (500 filtered): 6.247s\nann: 1000 TopK queries (500 filtered): 6.702s\nANN and exact returned identical rows and distances for all 1000 queries",
+      "agent_interpretation": "当前首维剪枝在该 128 维样本上没有缩短查询耗时，因此本轮数据不足以支持选择 ann 作为性能评测模式。"
+    },
+    {
+      "id": "E7",
+      "source": "agent-run tool",
+      "method": "用原版程序写入并提交一条记录及索引，将超过 1 MiB 的未提交事务写入 WAL 后强杀。另编译只加测试断点的本机副本，在重放第一帧后、输出就绪前暂停并再次 SIGKILL。用原版程序重启，核对提交行、索引 TopK 和截断后的 WAL 字节。",
+      "output": "PASS: SIGKILL after replaying one committed frame; unmodified restart recovered the committed row/index and discarded >1 MiB of uncommitted WAL.",
+      "limitations": "这是本机可控故障注入。暂停点只存在于临时测试副本，未进入提交源码。"
+    },
+    {
+      "id": "E8",
+      "source": "agent-run tool",
+      "official_protocol_commit": "f4d4e26653af823a7601668802f80e374ad6643c",
+      "method": "用官方交互式检查器启动旧镜像，等待就绪报文。改用官方 JSONL 协议后，重新构建 Linux amd64 镜像，分别运行握手检查和全部公开题包。",
+      "initial_output": "handshake: FAIL invalid JSON response: Expecting value: line 1 column 1 (char 0); stdout line (first 240 bytes)=b'READY'",
+      "output": "handshake: PASS\n官方检查器 result.json: passed=true，20 组公开用例全部通过，共 95 条 SQL。"
+    },
+    {
+      "id": "E9",
+      "source": "agent-run tool",
+      "method": "对修复后的 Linux amd64 镜像重跑语句原子性、强杀、TopK 暴力真值和 192 MiB 禁用交换空间的写入重启测试。",
+      "output": "Statement failure after >2 MiB of staged writes, SIGKILL, and three recoveries passed\n270 exact/indexed TopK comparisons against an independent oracle passed\nlinux/amd64: 52000 rows, 214504233 WAL bytes, reopened under a 192 MiB no-swap cap"
+    },
+    {
+      "id": "E10",
+      "source": "agent-run tool",
+      "method": "协议修复后重跑 10,000 条 128 维向量的本地模拟基准。比较相同查询在两种模式下的 rows 字段，排除请求编号差异。",
+      "output": "100 durable batches / 10000 rows: 1.150s\nexact: 1000 TopK queries (500 filtered): 6.254s\nann: 1000 TopK queries (500 filtered): 6.648s\nANN and exact returned identical rows and distances for all 1000 queries",
+      "limitations": "本地模拟耗时受机器和容器环境影响，无正式平台基线或磁盘 I/O 及峰值内存数据。"
     }
   ],
-  "limitations": "以上实验由 Agent 执行。现有会话未记录学生亲自执行实验、独立解释结果或复盘。公开样例与本地适配器无法验证平台的完整通信协议及正式准入。"
+  "limitations": "以上实验由 Agent 执行。现有会话未记录学生亲自执行实验、独立解释结果或复盘。官方检查器只包含公开样例，平台正式准入、性能与 Agent 评价结果需另行确认。"
 }

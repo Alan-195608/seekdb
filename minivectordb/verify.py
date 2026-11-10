@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run public semantic assertions and focused regressions against the local adapter."""
 import argparse
-from collections import Counter
 import json
 import math
 from pathlib import Path
@@ -12,39 +11,49 @@ import tempfile
 
 class Session:
     def __init__(self, binary, directory):
+        self.start([binary, "--data", directory])
+
+    def start(self, command):
         self.process = subprocess.Popen(
-            [binary, "--data", directory], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             encoding="utf-8", bufsize=1,
         )
-        assert self.read() == "READY"
+        self.request_id = 0
+        self.mode = "exact"
+        assert self.read() == {"type": "ready"}
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         if self.process.poll() is None:
-            self.process.stdin.close()
-            assert self.process.wait(timeout=10) == 0
+            try:
+                assert self.request("shutdown")["ok"] is True
+            finally:
+                self.process.stdin.close()
+                assert self.process.wait(timeout=10) == 0
+            assert self.process.stdout.read() == ""
         self.process.stdout.close()
 
     def read(self):
         line = self.process.stdout.readline()
-        assert line, f"unexpected EOF, status={self.process.poll()}"
-        return line.removesuffix("\n")
+        assert line.endswith("\n"), f"unexpected EOF, status={self.process.poll()}"
+        return json.loads(line)
+
+    def request(self, op, **fields):
+        self.request_id += 1
+        self.process.stdin.write(json.dumps({"id": self.request_id, "op": op, **fields}) + "\n")
+        self.process.stdin.flush()
+        response = self.read()
+        assert type(response["id"]) is int and response["id"] == self.request_id
+        assert type(response["ok"]) is bool
+        return response
 
     def sql(self, sql):
-        self.process.stdin.write(sql + "\n")
-        self.process.stdin.flush()
-        tag, first, *rest = self.read().split("\t")
-        if tag == "ERR":
-            return {"error": first}
-        if tag == "OK":
-            return {"affected_rows": int(first)}
-        assert tag == "RESULT", tag
-        columns = self.read().split("\t")
-        assert len(columns) == int(rest[0])
-        rows = [self.read().split("\t") for _ in range(int(first))]
-        return {"columns": columns, "rows": rows}
+        response = self.request("execute", sql=sql, search_mode=self.mode)
+        if not response["ok"]:
+            return {"error": response["error"]["code"]}
+        return response
 
     def kill(self):
         self.process.kill()
@@ -65,18 +74,18 @@ def assert_result(actual, expected):
     actual, rows = actual["rows"], expected["rows"]
     assert len(actual) == len(rows), (len(actual), len(rows))
     if expected.get("unordered"):
-        assert Counter(map(tuple, actual)) == Counter(tuple(map(str, row)) for row in rows)
-        return
+        actual, rows = sorted(actual), sorted(rows)
     for got, wanted in zip(actual, rows):
         assert len(got) == len(wanted)
         for value, target in zip(got, wanted):
             if isinstance(target, float):
-                assert math.isclose(float(value), target, rel_tol=1e-5, abs_tol=1e-5)
+                assert type(value) in (int, float) and math.isclose(value, target, rel_tol=1e-5, abs_tol=1e-5)
             elif isinstance(target, list):
+                assert isinstance(value, list)
                 assert all(math.isclose(x, y, abs_tol=1e-5, rel_tol=1e-5)
-                           for x, y in zip(json.loads(value), target, strict=True))
+                           for x, y in zip(value, target, strict=True))
             else:
-                assert value == str(target), (value, target)
+                assert type(value) is type(target) and value == target, (value, target)
 
 
 def public_cases(binary, root):
@@ -98,7 +107,7 @@ def public_cases(binary, root):
                         db = Session(binary, directory)
                         continue
                     if sql.startswith("--mode "):
-                        assert_result(db.sql(sql[2:]), {})
+                        db.mode = sql.split()[1]
                         continue
                     try:
                         assert_result(db.sql(sql), next(expected))
@@ -123,14 +132,14 @@ def crash_and_statement_atomicity(binary):
             # Force multiple physical flushes before a duplicate at the end of one SQL statement.
             text = "x" * 960
             batch = ",".join(f"({i},'{text}',[0,0])" for i in range(2, 2500))
-            assert db.sql(f"INSERT INTO t VALUES {batch},(1,'duplicate',[0,0])")["error"] == "DUPLICATE_KEY"
+            assert db.sql(f"INSERT INTO t VALUES {batch},(1,'duplicate',[0,0])")["error"] == "duplicate_key"
             assert_result(db.sql("SELECT id,c FROM t"), {"rows": [[1, "准备提交"]]})
             assert_result(db.sql("COMMIT"), {})
             assert_result(db.sql("CREATE VECTOR INDEX v_idx ON t(v)"), {})
             assert_result(db.sql("BEGIN"), {})
             assert_result(db.sql("DELETE FROM t WHERE id=1"), {"affected_rows": 1})
             assert_result(db.sql("INSERT INTO t VALUES(1,'未提交',[0,0]),(2,'未提交',[0,0])"), {})
-            assert_result(db.sql("MODE ann"), {})
+            db.mode = "ann"
             assert_result(db.sql("SELECT id FROM t ORDER BY L2_DISTANCE(v,[0,0]) LIMIT 1"),
                           {"rows": [[1]]})
             db.kill()
@@ -139,7 +148,7 @@ def crash_and_statement_atomicity(binary):
         for _ in range(3):
             with Session(binary, directory) as db:
                 assert_result(db.sql("SELECT id,c FROM t"), {"rows": [[1, "准备提交"]]})
-                assert_result(db.sql("MODE ann"), {})
+                db.mode = "ann"
                 assert_result(db.sql("SELECT id,L2_DISTANCE(v,[0,0]) AS d FROM t ORDER BY d LIMIT 1"),
                               {"rows": [[1, 1.0]]})
                 assert_result(db.sql("BEGIN"), {})
@@ -157,7 +166,7 @@ def index_oracle(binary):
 
     def compare(db, rows):
         for mode in ("exact", "ann"):
-            assert_result(db.sql("MODE " + mode), {})
+            db.mode = mode
             for x, y in [(0, 0), (2, -1), (100, 100)]:
                 for group in range(5):
                     for k in (1, 10, 600):
