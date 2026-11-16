@@ -67,7 +67,11 @@ int ObIKCJKProcessor::do_process(TokenizeContext &ctx,
       if (OB_FAIL(dict_main_.match({char_len, ch}, hit))) {
       } else if (hit.is_match()) {
         // output token
-        hits_.push_back(hit);
+        // A terminal hit cannot consume another character. Retaining it
+        // allocates a list node only to discard it on the next iteration.
+        if (hit.is_prefix()) {
+          hits_.push_back(hit);
+        }
         ctx.add_token(ctx.fulltext(),
                       ctx.get_cursor(),
                       char_len,

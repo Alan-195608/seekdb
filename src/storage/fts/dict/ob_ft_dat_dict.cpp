@@ -283,7 +283,11 @@ int ObFTDATReader<DATA_TYPE>::match_with_hit(const ObString &ft_char,
       hit.end_pos_ = hit.end_pos_ + ft_char.length();
       hit.char_cnt_++;
       hit.set_match();
-      hit.set_prefix(); // to be checked next time
+      // The builder uses -1 for terminal nodes without children; other
+      // negative bases mark words that can also extend into longer words.
+      if (base[idx] != -1) {
+        hit.set_prefix();
+      }
     } else {
       hit.base_idx_ = idx;
       hit.end_pos_ = hit.end_pos_ + ft_char.length();

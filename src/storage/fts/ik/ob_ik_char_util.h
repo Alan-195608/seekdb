@@ -451,6 +451,18 @@ inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, 
   // All predicates inspect the same code point. Decode it once, preserving
   // predicate order (fullwidth letters/digits also belong to OTHER_CJK).
   if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
+  } else if (unicode < 0x80) {
+    // ASCII is disjoint from CJK and surrogate blocks.
+    if ((unicode >= 'A' && unicode <= 'Z') || (unicode >= 'a' && unicode <= 'z')) {
+      type = CharType::ENGLISH_LETTER;
+    } else if (unicode >= '0' && unicode <= '9') {
+      type = CharType::ARABIC_LETTER;
+    }
+  } else if ((unicode >= 0x4E00 && unicode <= 0x9FFF)
+             || (unicode >= 0x3400 && unicode <= 0x4DBF)
+             || (unicode >= 0xF900 && unicode <= 0xFAFF)) {
+    // Common Chinese characters need no out-of-line predicate calls.
+    type = CharType::CHINESE;
   } else if (ObUnicodeBlockUtils::is_alpha(unicode)) {
     type = CharType::ENGLISH_LETTER;
   } else if (ObUnicodeBlockUtils::is_arabic(unicode)) {
