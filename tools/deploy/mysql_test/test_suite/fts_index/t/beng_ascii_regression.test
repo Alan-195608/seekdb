@@ -1,0 +1,35 @@
+# owner group: storage
+# description: BENG ASCII normalization, fallback and token lifetime
+--disable_query_log
+--disable_result_log
+SET NAMES utf8mb4;
+SELECT JSON_CONTAINS(TOKENIZE('Hello WORLD lower 123 abc-def !!!', 'beng'), '["hello","world","lower","123","abc","def"]') AND JSON_CONTAINS('["hello","world","lower","123","abc","def"]', TOKENIZE('Hello WORLD lower 123 abc-def !!!', 'beng')) INTO @beng_ascii_ok;
+let $ok = query_get_value(SELECT @beng_ascii_ok AS ok, ok, 1);
+if ($ok != 1) {
+  die Incorrect BENG ASCII tokens;
+}
+SELECT JSON_CONTAINS(TOKENIZE('  alpha ALPHA alpha  ZEBRA zebra  ', 'beng'), '["alpha","zebra"]') AND JSON_CONTAINS('["alpha","zebra"]', TOKENIZE('  alpha ALPHA alpha  ZEBRA zebra  ', 'beng')) INTO @beng_ascii_ok;
+let $ok = query_get_value(SELECT @beng_ascii_ok AS ok, ok, 1);
+if ($ok != 1) {
+  die Incorrect BENG ASCII tokens;
+}
+DROP TABLE IF EXISTS beng_ascii_regression;
+CREATE TABLE beng_ascii_regression(id INT PRIMARY KEY, body TEXT) CHARSET=utf8mb4;
+INSERT INTO beng_ascii_regression VALUES (1, 'HELLO lower 123'), (2, 'hello WORLD'), (3, 'other');
+CREATE FULLTEXT INDEX ft ON beng_ascii_regression(body) WITH PARSER beng;
+SELECT GROUP_CONCAT(id ORDER BY id) = '1,2' INTO @beng_ascii_ok FROM beng_ascii_regression WHERE MATCH(body) AGAINST('HeLLo');
+let $ok = query_get_value(SELECT @beng_ascii_ok AS ok, ok, 1);
+if ($ok != 1) {
+  die Incorrect BENG build/query token lifetime;
+}
+UPDATE beng_ascii_regression SET body='other' WHERE id=1;
+INSERT INTO beng_ascii_regression VALUES (4, 'HELLO');
+SELECT GROUP_CONCAT(id ORDER BY id) = '2,4' INTO @beng_ascii_ok FROM beng_ascii_regression WHERE MATCH(body) AGAINST('hello');
+let $ok = query_get_value(SELECT @beng_ascii_ok AS ok, ok, 1);
+if ($ok != 1) {
+  die Incorrect BENG tokens after DML;
+}
+DROP TABLE beng_ascii_regression;
+--enable_result_log
+--enable_query_log
+--echo BENG ASCII regression passed

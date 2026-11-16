@@ -95,10 +95,12 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
   } else {
     const char *doc = input_doc_->ptr_;
     const uint32_t doc_len = get_input_buf_len();
+    const bool utf8 = 0 == STRCMP(cs_->csname, "utf8mb4");
     int64_t token_len = 0;
     // to next non-whitespace pos
     while (OB_SUCC(ret) && found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = utf8 && static_cast<unsigned char>(doc[trav_pos_]) < 128
+          ? 1 : ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
       trav_pos_ += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {// if char is invalid, just skip the rest of document
         iter_end_ = true;
@@ -112,7 +114,8 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
     // to next whitespace pos
     while (OB_SUCC(ret) && !found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = utf8 && static_cast<unsigned char>(doc[trav_pos_]) < 128
+          ? 1 : ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
       trav_pos_ += c_len;
       token_len += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {
@@ -244,7 +247,6 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
   } else {
     next_token.reset();
     token_freq = 0;
-    norm_allocator_.reuse();
     ObDatum tmp_datum;
     bool found_alnum = false;
     uint32_t norm_token_len = 0;
@@ -295,8 +297,36 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
     } else {
       ObString norm_alnum_token(norm_token_len, norm_token_ptr);
       ObString norm_lower_token;
-      if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
+      // UTF-8 ASCII words need no Unicode decoding. The input document remains
+      // alive until the stream is exhausted; unchanged words can be borrowed.
+      bool ascii = 0 == STRCMP(cs_->csname, "utf8mb4")
+          && (cs_->caseinfo == &ob_unicase_default || cs_->caseinfo == &ob_unicase_unicode520);
+      bool needs_lower = false;
+      for (uint32_t i = 0; ascii && i < norm_token_len; ++i) {
+        const unsigned char ch = static_cast<unsigned char>(norm_token_ptr[i]);
+        ascii = ch < 128;
+        needs_lower |= ch >= 'A' && ch <= 'Z';
+      }
+      if (ascii && !needs_lower) {
+        norm_lower_token = norm_alnum_token;
+      } else if (ascii) {
+        norm_allocator_.reuse();
+        char *buf = static_cast<char *>(norm_allocator_.alloc(norm_token_len));
+        if (OB_ISNULL(buf)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          for (uint32_t i = 0; i < norm_token_len; ++i) {
+            const unsigned char ch = static_cast<unsigned char>(norm_token_ptr[i]);
+            buf[i] = ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch;
+          }
+          norm_lower_token.assign_ptr(buf, norm_token_len);
+        }
       } else {
+        norm_allocator_.reuse();
+        if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
+        }
+      }
+      if (OB_SUCC(ret)) {
         next_token.set_string(norm_lower_token);
       }
     }

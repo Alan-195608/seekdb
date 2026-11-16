@@ -11987,6 +11987,35 @@ int ObLogPlan::construct_startup_filter_for_limit(ObRawExpr *limit_expr, ObLogic
   return ret;
 }
 
+// A posting-list union is sufficient only when every MATCH use consumes its
+// truth value. Inspect all statement expressions, including SELECT/ORDER BY,
+// so a shared MATCH expression never loses an observable relevance score.
+static int check_fts_score_usage(ObRawExpr *expr,
+                                 ObRawExpr *target,
+                                 const bool truth_context,
+                                 bool &needs_score,
+                                 bool &seen_target)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(expr)) {
+    // Optional expression children are not proof that a score is unobserved.
+    needs_score = true;
+  } else if (expr->get_expr_type() == T_FUN_MATCH_AGAINST) {
+    seen_target |= expr == target;
+    needs_score |= !truth_context;
+  } else {
+    const ObItemType type = expr->get_expr_type();
+    const bool child_truth = truth_context
+        && (type == T_OP_BOOL || type == T_OP_AND || type == T_OP_OR);
+    for (int64_t i = 0; OB_SUCC(ret) && !needs_score && i < expr->get_param_count(); ++i) {
+      if (OB_FAIL(SMART_CALL(check_fts_score_usage(expr->get_param_expr(i), target,
+                                                 child_truth, needs_score, seen_target)))) {
+      }
+    }
+  }
+  return ret;
+}
+
 int ObLogPlan::prepare_text_retrieval_scan(const ObIArray<ObRawExpr *> &scan_match_exprs,
                                            const ObIArray<ObRawExpr *> &scan_match_filters,
                                            const ObIArray<ObRawExpr *> &all_match_filters,
@@ -12039,6 +12068,34 @@ int ObLogPlan::prepare_text_retrieval_scan(const ObIArray<ObRawExpr *> &scan_mat
     ObTextRetrievalInfo &tr_info = table_scan->get_text_retrieval_info();
     tr_info.match_expr_ = match_against;
     tr_info.pushdown_match_filter_ = match_pred;
+    // Unweighted natural-language scores are positive exactly for matching
+    // postings. Do not build document-frequency/length aggregates or evaluate
+    // BM25 when the sole pushed predicate is BOOL(MATCH) and no score escapes.
+    // Keep functional lookup, hybrid vector scans and other MATCH modes intact.
+    if (!table_scan->is_vec_idx_scan()
+        && all_match_filters.count() == 1
+        && NATURAL_LANGUAGE_MODE == match_against->get_mode_flag()
+        && match_against->get_columns_boosts().empty()
+        && match_pred->get_expr_type() == T_OP_BOOL
+        && match_pred->get_param_count() == 1
+        && match_pred->get_param_expr(0) == match_against) {
+      ObSEArray<ObRawExpr *, 16> relation_exprs;
+      bool needs_score = false;
+      bool seen_target = false;
+      if (OB_FAIL(get_stmt()->get_relation_exprs(relation_exprs))) {
+      }
+      for (int64_t i = 0; OB_SUCC(ret) && !needs_score && i < relation_exprs.count(); ++i) {
+        ObRawExpr *expr = relation_exprs.at(i);
+        const bool truth_context = ObOptimizerUtil::find_item(get_stmt()->get_condition_exprs(), expr);
+        if (OB_FAIL(check_fts_score_usage(expr, match_against, truth_context,
+                                        needs_score, seen_target))) {
+        }
+      }
+      if (OB_SUCC(ret) && seen_target && !needs_score) {
+        tr_info.need_calc_relevance_ = false;
+        tr_info.pushdown_match_filter_ = nullptr;
+      }
+    }
     // The mapping table is absent when the data-table rowkey is used as the document ID.
     table_scan->set_doc_id_index_table_id(tr_info.doc_id_idx_tid_);
     if (table_scan->is_vec_adaptive_scan() || table_scan->is_vec_idx_scan_post_filter()) {
