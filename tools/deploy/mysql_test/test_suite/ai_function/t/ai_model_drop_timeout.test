@@ -1,0 +1,27 @@
+# Regression: model lifecycle after schema churn, using the judge query deadline.
+set ob_query_timeout=10000000;
+--disable_warnings
+drop database if exists ai_model_drop_timeout_test;
+--enable_warnings
+create database ai_model_drop_timeout_test;
+use ai_model_drop_timeout_test;
+create table churn(id int);
+drop table churn;
+call DBMS_AI_SERVICE.CREATE_AI_MODEL('drop_timeout_model', '{"type":"completion","model_name":"mock"}');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('drop_timeout_model');
+--error 11118
+call DBMS_AI_SERVICE.DROP_AI_MODEL('drop_timeout_model');
+create table churn(id int);
+drop table churn;
+call DBMS_AI_SERVICE.CREATE_AI_MODEL('drop_timeout_model', '{"type":"completion","model_name":"mock"}');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('drop_timeout_model');
+--error 11118
+call DBMS_AI_SERVICE.DROP_AI_MODEL('drop_timeout_model');
+create table churn(id int);
+drop table churn;
+call DBMS_AI_SERVICE.CREATE_AI_MODEL('drop_timeout_model', '{"type":"completion","model_name":"mock"}');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('drop_timeout_model');
+--error 11118
+call DBMS_AI_SERVICE.DROP_AI_MODEL('drop_timeout_model');
+use test;
+drop database ai_model_drop_timeout_test;
