@@ -1,3 +1,14 @@
+# Delivery status after benchmark failure
+
+The score-elision optimizer change has been withdrawn. The submission now
+retains the original optimizer and relevance execution path, alongside the
+IK and BENG tokenization changes. Static inspection found that the dormant
+posting-only path still accesses absent document/token aggregation objects
+in the current executor. It must not be enabled through an optimizer flag
+alone. No further test or build was executed, per user instruction.
+
+The following records the withdrawn design, not active submission behavior.
+
 # Full-text relevance elision and BENG normalization
 
 Based on competition revision `5bce9e06d1281347ad61344e4b01fab9158c58a2`.
