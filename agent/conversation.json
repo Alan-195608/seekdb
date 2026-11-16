@@ -123,5 +123,57 @@
       "limitations": "本地模拟耗时受机器和容器环境影响，无正式平台基线或磁盘 I/O 及峰值内存数据。"
     }
   ],
-  "limitations": "以上实验由 Agent 执行。现有会话未记录学生亲自执行实验、独立解释结果或复盘。官方检查器只包含公开样例，平台正式准入、性能与 Agent 评价结果需另行确认。"
+  "limitations": "以上实验由 Agent 执行。现有会话未记录学生亲自执行实验、独立解释结果或复盘。官方检查器只包含公开样例，平台正式准入、性能与 Agent 评价结果需另行确认。",
+  "material_type": "real_development_conversation_excerpt",
+  "synthetic": false,
+  "summary": "MiniVectorDB 真实开发会话摘录及 Agent 执行的验证记录。包含赛题上下文、学生请求、Agent 回复、10 项实验，覆盖 SQL、事务原子性、崩溃恢复、向量 TopK、限内存重启及 JSON Lines 协议修复。学生发言与 Agent 和工具结果分别标注。现有证据没有记录学生亲自运行实验或独立解释技术结果；不能将 Agent 的实现、测试和解释归为学生贡献。",
+  "material_scope": {
+    "coverage": "本文件是摘录，不是完整逐轮会话导出。保留的开发记录日期为 2026-11-09 至 2026-11-10，另附 2026-11-16 用户反馈。",
+    "omissions": "省略本机路径、截图、凭据及未被原摘录保存的开发轮次。无法从这些摘录确认完整会话中的其他学生学习贡献。",
+    "redaction": "未包含访问密钥、令牌或隐藏思维链。",
+    "execution_attribution": "experiments 中的全部实验由 Agent 执行；学生未被记录为实验操作者。",
+    "score_status": "未包含本地评分或自报平台成绩；公开测试通过不等于正式评测通过。"
+  },
+  "platform_feedback": [
+    {
+      "id": "F1",
+      "date": "2026-11-16",
+      "role": "student",
+      "content": "Agent Prompt 原始分  Prompt结果无效、待复核、超出平台0–100范围或缺少材料摘要，本项不参与排名；未截断或换算本地分数。"
+    },
+    {
+      "id": "F2",
+      "date": "2026-11-16",
+      "role": "student",
+      "content": "找一下问题，并且解决，我就这么多信息"
+    }
+  ],
+  "retrospective": {
+    "author": "agent",
+    "content": "本次检查确认原文件为合法 JSON 对象，位于 agent/conversation.json，已有实验与来源区分，但没有独立摘要或明确的摘录完整性说明。本次增加内容摘要、范围说明与证据索引，不改写既有学生发言和实验输出。反馈中的 0–100 限制与当前官方 agent-learning-evidence-v3-unbounded 规则不一致；平台具体评审状态、原始分和材料摘要不可从仓库确认。",
+    "verification_status": "材料结构可在本地校验；正式 Prompt 有效性仍须由平台评审确认。"
+  },
+  "evidence_index": {
+    "student_messages": [
+      "/conversations/3/content",
+      "/conversations/6/content",
+      "/conversations/7/content",
+      "/conversations/8/content",
+      "/conversations/9/content"
+    ],
+    "agent_experiments": [
+      "/experiments/0/output",
+      "/experiments/1/output",
+      "/experiments/2/output",
+      "/experiments/3/output",
+      "/experiments/4/output",
+      "/experiments/5/output",
+      "/experiments/6/output",
+      "/experiments/7/output",
+      "/experiments/8/output",
+      "/experiments/9/output"
+    ],
+    "scope": "/material_scope/coverage",
+    "limitations": "/limitations"
+  }
 }
