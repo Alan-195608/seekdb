@@ -139,10 +139,10 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
 bool ObTextWhitespaceTokenizer::found_delimiter()
 {
-  bool found = false;
-  const char *curr_char = input_doc_->ptr_ + trav_pos_;
-  found = ob_isspace(cs_, *curr_char) || ob_iscntrl(cs_, *curr_char) || ob_ispunct(cs_, *curr_char);
-  return found;
+  const unsigned char byte = static_cast<unsigned char>(input_doc_->ptr_[trav_pos_]);
+  // These predicates use the same charset table. Read it once while retaining
+  // the collation's classification, including its treatment of high bytes.
+  return nullptr != cs_->ctype && (cs_->ctype[byte + 1] & (_MY_SPC | _MY_CTR | _MY_PNT));
 }
 
 ObTokenNormalizer::ObTokenNormalizer()
