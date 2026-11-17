@@ -150,7 +150,7 @@
   ],
   "retrospective": {
     "author": "agent",
-    "content": "本次检查确认原文件为合法 JSON 对象，位于 agent/conversation.json，已有实验与来源区分，但没有独立摘要或明确的摘录完整性说明。本次增加内容摘要、范围说明与证据索引，不改写既有学生发言和实验输出。反馈中的 0–100 限制与当前官方 agent-learning-evidence-v3-unbounded 规则不一致；平台具体评审状态、原始分和材料摘要不可从仓库确认。",
+    "content": "本次依据用户提供的现行规则修正材料：平台原始评价分有效范围为 0–100，未截断、换算或自报本地分数。文件含材料摘要、真实会话摘录、实验记录和证据索引。反馈是多个无效原因的合并提示，无法仅凭该提示确认具体原因。正式 MySQL 用例全部通过后，材料仍须由平台确认有效并独立排名。",
     "verification_status": "材料结构可在本地校验；正式 Prompt 有效性仍须由平台评审确认。"
   },
   "evidence_index": {
@@ -175,5 +175,43 @@
     ],
     "scope": "/material_scope/coverage",
     "limitations": "/limitations"
+  },
+  "learning_record": {
+    "attribution": "以下为 Agent 对既有可核验记录的整理，非新增历史对话，非学生自述。",
+    "problem_understanding_and_plan": {
+      "evidence": [
+        "U2",
+        "A2",
+        "U4"
+      ],
+      "analysis": "将工作拆为 SQL 语义、事务与恢复、向量正确性、资源约束和评测协议。缺少正式驱动时隔离协议层；公开样例与本地驱动通过不能证明正式协议兼容。"
+    },
+    "prompt_design_and_iteration": {
+      "evidence": [
+        "U4",
+        "U7",
+        "E4",
+        "E8"
+      ],
+      "analysis": "用户要求核对提测要求并重做错误工作。后续验证从自建驱动扩展到官方样例，再到官方交互检查器；E4记录错误名不一致及修复，E8记录 READY 握手失败与 JSONL 修复。摘录未保存逐轮完整 Prompt，不能声称存在未留存的迭代文本。"
+    },
+    "verification_and_independent_judgment": {
+      "evidence": [
+        "E6",
+        "E7",
+        "E8",
+        "E10"
+      ],
+      "analysis": "使用暴力 TopK 真值、故障注入及官方协议检查器避免实现自证。E10 中 ann 6.648秒慢于 exact 6.254秒，因此不能由名称推断 ann 更快。以上判断由 Agent 作出，未冒充学生独立判断。"
+    },
+    "reflection_and_transfer": {
+      "evidence": [
+        "E4",
+        "E8",
+        "E10"
+      ],
+      "analysis": "语义测试与通信协议必须分别验证；错误码也是契约。恢复测试应覆盖恢复过程中再次崩溃。性能选择必须比较相同数据和查询的结果及耗时。这些方法可迁移至其他数据库协议适配、持久化服务和检索系统。"
+    },
+    "remaining_limits": "没有新增学生学习发言，不补造学习经历。公开用例通过不代表正式 MySQL 全通过；不保证平台评价有效或得分。"
   }
 }
