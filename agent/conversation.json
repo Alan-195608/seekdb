@@ -126,7 +126,7 @@
   "limitations": "以上实验由 Agent 执行。现有会话未记录学生亲自执行实验、独立解释结果或复盘。官方检查器只包含公开样例，平台正式准入、性能与 Agent 评价结果需另行确认。",
   "material_type": "real_development_conversation_excerpt",
   "synthetic": false,
-  "summary": "MiniVectorDB 真实开发会话摘录及 Agent 执行的验证记录。包含赛题上下文、学生请求、Agent 回复、10 项实验，覆盖 SQL、事务原子性、崩溃恢复、向量 TopK、限内存重启及 JSON Lines 协议修复。学生发言与 Agent 和工具结果分别标注。现有证据没有记录学生亲自运行实验或独立解释技术结果；不能将 Agent 的实现、测试和解释归为学生贡献。",
+  "summary": "MiniVectorDB 真实开发聊天摘录与实验记录，包含题包缺失时的学生原始提问、提测要求核查请求、Agent 回复、错误码修正和 JSONL 握手纠错、SQL/恢复/向量独立真值验证，以及用户提供的正式准入通过和 Prompt 零分反馈。新增回查原始聊天记录并标明角色和来源。技术实现、实验及多数解释由 Agent 完成；目前摘录未提供足够证据证明学生自身作出技术解释或参与实验闭环，不能将 Agent 成果归为学生贡献。",
   "material_scope": {
     "coverage": "本文件是摘录，不是完整逐轮会话导出。保留的开发记录日期为 2026-11-09 至 2026-11-10，另附 2026-11-16 用户反馈。",
     "omissions": "省略本机路径、截图、凭据及未被原摘录保存的开发轮次。无法从这些摘录确认完整会话中的其他学生学习贡献。",
@@ -150,8 +150,8 @@
   ],
   "retrospective": {
     "author": "agent",
-    "content": "本次依据用户提供的现行规则修正材料：平台原始评价分有效范围为 0–100，未截断、换算或自报本地分数。文件含材料摘要、真实会话摘录、实验记录和证据索引。反馈是多个无效原因的合并提示，无法仅凭该提示确认具体原因。正式 MySQL 用例全部通过后，材料仍须由平台确认有效并独立排名。",
-    "verification_status": "材料结构可在本地校验；正式 Prompt 有效性仍须由平台评审确认。"
+    "content": "重新核对本地保存的官方说明第3.4.1至3.4.3节后，确认主要证据缺口是学生自身的具体技术理解、验证设计与结果解释。先前增加的 Agent 总结不能替代学生贡献，也不能证明零分是格式错误。本轮回查原始聊天补充真实问题与相关回复；保留来源和角色，不把 Agent 工作转写成学生学习。平台页面所述0–100与本地保存的旧版不封顶规则存在差异，材料不自报评价分，实际规则版本以平台为准。未获得分项评审报告，零分的精确判据尚不能确定。",
+    "verification_status": "仅验证材料可读、来源摘录及引用；未完成平台复评，不保证非零分。"
   },
   "evidence_index": {
     "student_messages": [
@@ -213,5 +213,80 @@
       "analysis": "语义测试与通信协议必须分别验证；错误码也是契约。恢复测试应覆盖恢复过程中再次崩溃。性能选择必须比较相同数据和查询的结果及耗时。这些方法可迁移至其他数据库协议适配、持久化服务和检索系统。"
     },
     "remaining_limits": "没有新增学生学习发言，不补造学习经历。公开用例通过不代表正式 MySQL 全通过；不保证平台评价有效或得分。"
-  }
+  },
+  "recovered_source_records": [
+    {
+      "id": "R1",
+      "role": "agent",
+      "content": "我先核对工作区、报名仓库和官方题包。截图提供了功能范围和评分规则，具体 SQL 行为、输入输出协议及材料路径以题包和评测驱动为准。",
+      "source": "同一开发聊天的 Agent 原文；不归为学生贡献",
+      "source_line": 20,
+      "timestamp": "2026-11-09T06:48:40.808Z"
+    },
+    {
+      "id": "R2",
+      "role": "agent",
+      "content": "已找到官方赛题说明，确认学习材料的路径是 `agent/conversation.json`，并确认恢复测试包含数据量超过内存预算的场景。公开说明说题包另行提供，我会先实现数据库核心，再用评测驱动校对协议。 [官方赛题说明](https://oceanbase.yuque.com/org-wiki-obtech-vh7w9r/hc3pio/lg8enxlmwg69unt6)",
+      "source": "同一开发聊天的 Agent 原文；不归为学生贡献",
+      "source_line": 81,
+      "timestamp": "2026-11-09T06:57:00.804Z"
+    },
+    {
+      "id": "R1",
+      "role": "student",
+      "content": "<send_user_message_question_reply>\n[{\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"call_03058857e48b4e7ab70318b4fe08b930\\\",0]\",\"question\":\"如果比赛平台已提供 MiniVectorDB 公开题包或配套测试驱动，请发压缩包、下载链接或本地路径。我会先实现数据库核心，拿到题包后即可对齐评测协议。\",\"answer\":\"没有，影响做题吗\"}]\n</send_user_message_question_reply>\n",
+      "source": "原始聊天用户输入，保留问答包装上下文",
+      "source_line": 104,
+      "timestamp": "2026-11-09T06:59:10.449Z"
+    },
+    {
+      "id": "R4",
+      "role": "agent",
+      "content": "可以继续做。题包缺失会影响正式兼容性验证，因为就绪标识、结果格式、错误码和模式切换命令都由评测驱动定义。我会把这些规则集中在独立的协议层，先用本地驱动验证 SQL、事务、恢复和检索。",
+      "source": "同一开发聊天的 Agent 原文；不归为学生贡献",
+      "source_line": 107,
+      "timestamp": "2026-11-09T06:59:47.222Z"
+    },
+    {
+      "id": "R5",
+      "role": "agent",
+      "content": "MiniVectorDB 已实现并推送到报名仓库。源码、Dockerfile 和 `agent/conversation.json` 都在同一次提交中。\n\n- 仓库与分支：[Alan-195608/seekdb · 2026-competition-round2](https://github.com/Alan-195608/seekdb/tree/2026-competition-round2)\n- 完整 Commit SHA：`cb21c894e11373205992e6f72099a6b88d3af9ab`\n\nLinux x86_64 容器通过了 **5 组公开用例、32 条 SQL**，以及 **270 次 TopK 对照**、语句原子性和强制终止恢复测试。另在 **192 MiB 内存、无交换空间**的限制下写入 52,000 行，生成约 205 MiB 的日志，并成功重启和查询。\n\n**赛事平台尚未提测。** 公开样例足以验证已公布的 SQL 行为，完整评测驱动仍未公开。当前使用独立的本地通信适配层，正式协议兼容性和隐藏用例成绩仍待验证。学习材料如实区分了你的发言和 Agent 执行的实验。 [官方公开用例说明](https://github.com/oceanbase/seekdb/tree/2026-competition-round2/mysqltest)",
+      "source": "同一开发聊天的 Agent 原文；不归为学生贡献",
+      "source_line": 492,
+      "timestamp": "2026-11-09T07:45:11.148Z"
+    },
+    {
+      "id": "R6",
+      "role": "agent",
+      "content": "截图显示**本次评测未完成**。MySQL 正式用例还没有准入结果，因此性能和 Agent Prompt 都没有出分。这个弹窗看不出任务是在排队、执行中，还是已经异常结束。\n\n我复测了官方新发布的样例，修正了两个错误名。新版通过了 **20 组公开用例、95 条 SQL**，已推送到 `2026-competition-round2`。新版完整 SHA 是 `cbf61b470c4b7e9c86513117c1e95add134656f9`。正式通信协议仍待验证。 [官方新版用例](https://github.com/oceanbase/seekdb/tree/9f6df2ba5acf871376e22b64a3d0724e4b575044/mysqltest)\n\n**先别重复提测。** 如果刚才填写了旧 SHA，本次记录仍对应旧版本。关闭弹窗看提测记录的主状态。如果是「待执行」或「执行中」，等这次跑完。如果是「执行失败」，把失败详情发来，我可以据此定位。",
+      "source": "同一开发聊天的 Agent 原文；不归为学生贡献",
+      "source_line": 589,
+      "timestamp": "2026-11-09T10:44:40.458Z"
+    },
+    {
+      "id": "R7",
+      "role": "agent",
+      "content": "我会先找这条提测记录的错误详情，再核对官方是否补发了运行协议，区分仓库拉取、镜像构建和数据库启动这几种失败。",
+      "source": "同一开发聊天的 Agent 原文；不归为学生贡献",
+      "source_line": 606,
+      "timestamp": "2026-11-09T10:46:28.506Z"
+    }
+  ],
+  "source_provenance": {
+    "description": "回查本机保存的 2026-11-09 原始开发聊天，补回题包缺失问题的原文及同一聊天的相关回复。记录有角色、原始行号及时间，省略附件与无关消息。这仍是摘录。",
+    "source_sha256": "d81cd46965063d2d5dada4248142150b71a2885d905872e84237ad1bba2e5b5d",
+    "selection": "保留用户关于缺少题包的真实提问，以及包含题包或协议的 Agent 回复。Agent 回复不自动构成学生理解或验证。"
+  },
+  "current_feedback": [
+    {
+      "role": "student",
+      "content": "MySQL 正式用例：通过；此项为准入条件，不计排名分。性能原始分：2506.256642。Agent Prompt评测完成；原始分 = 0.000000",
+      "record_type": "用户提供的平台结果转录，非本地测试，未独立查询平台，未确认对应锁定 SHA"
+    },
+    {
+      "role": "student",
+      "content": "那你看看为什么不对啊，题目也给你了，评分规则也给你了，改号后推送到github上",
+      "record_type": "本次真实请求原文"
+    }
+  ]
 }
