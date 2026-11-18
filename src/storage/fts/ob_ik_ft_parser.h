@@ -30,6 +30,10 @@ namespace oceanbase
 namespace storage
 {
 class ObFTDictHub;
+class ObIKLetterProcessor;
+class ObIKQuantifierProcessor;
+class ObIKCJKProcessor;
+class ObIKSurrogateProcessor;
 
 class ObIKFTParser final : public ObITokenIterator
 {
@@ -40,7 +44,10 @@ public:
         coll_type_(ObCollationType::CS_TYPE_INVALID),
         ctx_(nullptr),
         hub_(hub),
-        segmenters_(allocator_),
+        letter_(nullptr),
+        quantifier_(nullptr),
+        cjk_(nullptr),
+        surrogate_(nullptr),
         cache_main_(allocator),
         cache_quan_(allocator),
         cache_stop_(allocator),
@@ -66,17 +73,12 @@ private:
 
   int process_next_batch();
 
-  int process_one_char(TokenizeContext &ctx,
-                       const char *ch,
-                       const uint8_t char_len,
-                       const ObFTCharUtil::CharType type);
-
 private:
   int init_dict(const ObFTParserParam &param);
 
   int init_single_dict(ObFTDictDesc desc, ObFTCacheRangeContainer &container);
 
-  int init_segmenter(const ObFTParserParam &param);
+  int init_segmenters();
 
   int init_ctx(const ObFTParserParam &param);
 
@@ -96,7 +98,10 @@ private:
   ObCollationType coll_type_;
   TokenizeContext *ctx_;
   ObFTDictHub *hub_;
-  ObList<ObIIKProcessor *, ObIAllocator> segmenters_;
+  ObIKLetterProcessor *letter_;
+  ObIKQuantifierProcessor *quantifier_;
+  ObIKCJKProcessor *cjk_;
+  ObIKSurrogateProcessor *surrogate_;
 
   // For now there's no change of dict in one query, so we can pin dict this level.
   ObFTCacheRangeContainer cache_main_;
