@@ -136,10 +136,8 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
 bool ObTextWhitespaceTokenizer::found_delimiter()
 {
-  bool found = false;
-  const char *curr_char = input_doc_->ptr_ + trav_pos_;
-  found = ob_isspace(cs_, *curr_char) || ob_iscntrl(cs_, *curr_char) || ob_ispunct(cs_, *curr_char);
-  return found;
+  const unsigned char byte = static_cast<unsigned char>(input_doc_->ptr_[trav_pos_]);
+  return nullptr != cs_->ctype && (cs_->ctype[byte + 1] & (_MY_SPC | _MY_CTR | _MY_PNT));
 }
 
 ObTokenNormalizer::ObTokenNormalizer()
@@ -238,13 +236,19 @@ void ObBasicEnglishNormalizer::reuse()
 
 int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
 {
+  norm_allocator_.reuse();
+  return get_next(next_token, token_freq, norm_allocator_);
+}
+
+int ObBasicEnglishNormalizer::get_next(
+    ObDatum &next_token, int64_t &token_freq, ObIAllocator &output_allocator)
+{
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
   } else {
     next_token.reset();
     token_freq = 0;
-    norm_allocator_.reuse();
     ObDatum tmp_datum;
     bool found_alnum = false;
     uint32_t norm_token_len = 0;
@@ -295,7 +299,7 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
     } else {
       ObString norm_alnum_token(norm_token_len, norm_token_ptr);
       ObString norm_lower_token;
-      if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
+      if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, output_allocator))) {
       } else {
         next_token.set_string(norm_lower_token);
       }

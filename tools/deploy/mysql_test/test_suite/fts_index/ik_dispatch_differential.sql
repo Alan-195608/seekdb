@@ -30,4 +30,13 @@ UPDATE docs SET smart_body = '全文索引 A-12', max_body = '全文索引 A-12'
 DELETE FROM docs WHERE id = 2;
 SELECT id FROM docs WHERE MATCH(smart_body) AGAINST('全文索引') ORDER BY id;
 SELECT id FROM docs WHERE MATCH(max_body) AGAINST('全文索引' IN BOOLEAN MODE) ORDER BY id;
+SELECT TOKENIZE(CONCAT('Alpha ALPHA, Beta!', CHAR(9), 'beta — café １２３ 😀'), 'beng');
+SELECT TOKENIZE('!!! ... 😀', 'beng');
+CREATE TABLE english_docs (id INT PRIMARY KEY, body TEXT);
+INSERT INTO english_docs VALUES (1, 'Database DATABASE audit'), (2, 'database engine'),
+  (3, 'café — naïve'), (4, NULL);
+CREATE FULLTEXT INDEX idx_beng ON english_docs(body) WITH PARSER beng;
+SELECT id, MATCH(body) AGAINST('database audit') AS relevance
+  FROM english_docs WHERE MATCH(body) AGAINST('database audit') ORDER BY id;
+
 DROP DATABASE ik_dispatch_regression;
