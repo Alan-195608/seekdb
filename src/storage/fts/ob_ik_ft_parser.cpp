@@ -141,12 +141,15 @@ int ObIKFTParser::process_next_batch()
   } else {
     while (OB_SUCC(ret) && !do_seg && !ctx_->iter_end()) {
       ObFTCharUtil::CharType type = ObFTCharUtil::CharType::USELESS;
-      if (OB_FAIL(ctx_->current_char_type(type))) {
+      const char *ch = nullptr;
+      uint8_t char_len = 0;
       // The quantifier processor must run before the CJK processor.
-      } else if (OB_FAIL(letter_->ObIKLetterProcessor::process(*ctx_))) {
-      } else if (OB_FAIL(quantifier_->ObIKQuantifierProcessor::process(*ctx_))) {
-      } else if (OB_FAIL(cjk_->ObIKCJKProcessor::process(*ctx_))) {
-      } else if (OB_FAIL(surrogate_->ObIKSurrogateProcessor::process(*ctx_))) {
+      if (OB_FAIL(ctx_->current_char_type(type))) {
+      } else if (OB_FAIL(ctx_->current_char(ch, char_len))) {
+      } else if (OB_FAIL(letter_->ObIKLetterProcessor::do_process(*ctx_, ch, char_len, type))) {
+      } else if (OB_FAIL(quantifier_->ObIKQuantifierProcessor::do_process(*ctx_, ch, char_len, type))) {
+      } else if (OB_FAIL(cjk_->ObIKCJKProcessor::do_process(*ctx_, ch, char_len, type))) {
+      } else if (OB_FAIL(surrogate_->ObIKSurrogateProcessor::do_process(*ctx_, ch, char_len, type))) {
       } else {
         // 1. check segmention
         if (ctx_->handle_size() > SEGMENT_LIMIT && type == ObFTCharUtil::CharType::USELESS) {
